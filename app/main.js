@@ -5,23 +5,35 @@ const path = require('path')
 // As APIs nativas do Windows (koffi/user32/dwmapi) só carregam no Windows.
 // No macOS o app roda com fallbacks: sem ocultação do cursor do sistema e
 // mapeamento de janela capturada aproximado pela tela.
+// HAS_NATIVE: o koffi depende do runtime do Visual C++ (msvcp140.dll etc.),
+// que o app leva junto. Se ainda assim falhar em alguma máquina, o app abre
+// normalmente e só perde ocultar cursor / mirar dentro de janela — nunca
+// deve morrer na inicialização por causa disso.
 const IS_WIN = process.platform === 'win32'
+let HAS_NATIVE = false
 let DwmGetWindowAttribute = null
 let GetWindowRect = null
 let LoadCursorFromFileW = null
 let SetSystemCursor = null
 let SystemParametersInfoW = null
+let nativeLoadError = null
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9
 if (IS_WIN) {
-	const koffi = require('koffi')
-	koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' })
-	const dwmapi = koffi.load('dwmapi.dll')
-	const user32 = koffi.load('user32.dll')
-	DwmGetWindowAttribute = dwmapi.func('int __stdcall DwmGetWindowAttribute(int64 hwnd, uint attr, _Out_ RECT *rect, uint size)')
-	GetWindowRect = user32.func('bool __stdcall GetWindowRect(int64 hwnd, _Out_ RECT *rect)')
-	LoadCursorFromFileW = user32.func('int64 __stdcall LoadCursorFromFileW(str16 path)')
-	SetSystemCursor = user32.func('bool __stdcall SetSystemCursor(int64 hcur, uint id)')
-	SystemParametersInfoW = user32.func('bool __stdcall SystemParametersInfoW(uint uiAction, uint uiParam, void *pvParam, uint fWinIni)')
+	try {
+		const koffi = require('koffi')
+		koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' })
+		const dwmapi = koffi.load('dwmapi.dll')
+		const user32 = koffi.load('user32.dll')
+		DwmGetWindowAttribute = dwmapi.func('int __stdcall DwmGetWindowAttribute(int64 hwnd, uint attr, _Out_ RECT *rect, uint size)')
+		GetWindowRect = user32.func('bool __stdcall GetWindowRect(int64 hwnd, _Out_ RECT *rect)')
+		LoadCursorFromFileW = user32.func('int64 __stdcall LoadCursorFromFileW(str16 path)')
+		SetSystemCursor = user32.func('bool __stdcall SetSystemCursor(int64 hcur, uint id)')
+		SystemParametersInfoW = user32.func('bool __stdcall SystemParametersInfoW(uint uiAction, uint uiParam, void *pvParam, uint fWinIni)')
+		HAS_NATIVE = true
+	} catch (err) {
+		nativeLoadError = err
+		console.error('[TakeatCam] recursos nativos indisponíveis:', err && err.message)
+	}
 }
 
 // Conversão DIP -> pixels físicos: API exclusiva do Windows; no macOS
@@ -51,7 +63,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function windowPhysRect(hwnd) {
-	if (!IS_WIN) return null
+	if (!HAS_NATIVE) return null
 	const rect = {}
 	if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, rect, 16) === 0) return rect
 	if (GetWindowRect(hwnd, rect)) return rect
@@ -108,7 +120,7 @@ function invisibleCurPath() {
 }
 
 function setSystemCursorVisible(visible) {
-	if (!IS_WIN) return true // macOS: sem ocultação global de cursor (v1)
+	if (!HAS_NATIVE) return true // macOS ou sem runtime nativo: sem ocultação
 	if (visible) {
 		if (cursorHiddenByUs) {
 			const ok = SystemParametersInfoW(SPI_SETCURSORS, 0, null, 0) // recarrega os cursores do usuário
@@ -138,7 +150,7 @@ function setSystemCursorVisible(visible) {
 
 // Rede de segurança: se o processo morrer com o cursor escondido, restaura
 process.on('exit', () => {
-	if (IS_WIN && cursorHiddenByUs) SystemParametersInfoW(SPI_SETCURSORS, 0, null, 0)
+	if (HAS_NATIVE && cursorHiddenByUs) SystemParametersInfoW(SPI_SETCURSORS, 0, null, 0)
 })
 
 let win
@@ -322,9 +334,9 @@ function sourcePhysRect() {
 	if (activeSource && activeSource.kind === 'window') {
 		const r = windowPhysRect(activeSource.hwnd)
 		if (r) return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }
-		if (IS_WIN) return null
-		// macOS: sem API de retângulo de janela; aproxima pela tela onde o
-		// mouse está (funciona bem com a janela maximizada)
+		// Sem API de retângulo de janela (macOS, ou Windows sem o runtime
+		// nativo): aproxima pela tela onde o mouse está, que funciona bem
+		// com a janela capturada maximizada
 		const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
 		return toPhysRect(d.bounds)
 	}
