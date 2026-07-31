@@ -1,0 +1,29 @@
+{
+	"manifest_version": 3,
+	"name": "LiveZoom",
+	"version": "0.1.0",
+	"description": "Zoom suave ao vivo na página, com cursor suavizado. Compartilhe a guia no Meet e destaque o que importa na apresentação.",
+	"background": { "service_worker": "background.js" },
+	"content_scripts": [
+		{
+			"matches": ["<all_urls>"],
+			"js": ["content.js"],
+			"run_at": "document_idle",
+			"all_frames": false
+		}
+	],
+	"commands": {
+		"toggle-zoom": {
+			"suggested_key": { "default": "Alt+Z" },
+			"description": "Liga/desliga o zoom na posição do mouse"
+		},
+		"release-zoom": {
+			"suggested_key": { "default": "Alt+X" },
+			"description": "Solta o zoom"
+		},
+		"toggle-cursor": {
+			"suggested_key": { "default": "Alt+C" },
+			"description": "Liga/desliga o cursor suavizado"
+		}
+	}
+}

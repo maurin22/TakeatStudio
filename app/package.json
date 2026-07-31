@@ -1,0 +1,93 @@
+{
+	"name": "takeatcam",
+	"productName": "Takeat Studio",
+	"version": "0.3.1",
+	"description": "Espelho da tela com zoom suave ao vivo. Compartilhe a janela do Takeat Cam no Meet/OBS e transmita com zoom nos pontos certos.",
+	"author": "Takeat",
+	"main": "main.js",
+	"scripts": {
+		"start": "electron .",
+		"dist": "electron-builder --win"
+	},
+	"devDependencies": {
+		"electron": "^33.0.0",
+		"electron-builder": "^25.1.8"
+	},
+	"allowScripts": {
+		"electron@33.4.11": true,
+		"koffi@3.1.3": true
+	},
+	"dependencies": {
+		"koffi": "^3.1.3"
+	},
+	"build": {
+		"appId": "app.takeat.studio",
+		"productName": "Takeat Studio",
+		"directories": {
+			"output": "release"
+		},
+		"files": [
+			"main.js",
+			"preload.js",
+			"launcher-preload.js",
+			"overlay-preload.js",
+			"cursor-preload.js",
+			"map-preload.js",
+			"index.html",
+			"launcher.html",
+			"overlay.html",
+			"cursor.html",
+			"map.html",
+			"renderer.js",
+			"map.js",
+			"assets/**",
+			"cursors/**",
+			"fonts/**"
+		],
+		"asarUnpack": [
+			"node_modules/koffi/**"
+		],
+		"win": {
+			"target": [
+				{
+					"target": "nsis",
+					"arch": [
+						"x64"
+					]
+				}
+			],
+			"icon": "build/icon.png",
+			"extraResources": [
+				{
+					"from": "../takeatrec/release/win-unpacked",
+					"to": "takeatrec"
+				}
+			]
+		},
+		"mac": {
+			"target": [
+				{
+					"target": "dmg",
+					"arch": [
+						"universal"
+					]
+				}
+			],
+			"icon": "build/icon.png",
+			"category": "public.app-category.productivity",
+			"identity": null,
+			"artifactName": "TakeatStudio-${version}-mac.${ext}"
+		},
+		"nsis": {
+			"oneClick": false,
+			"perMachine": false,
+			"allowToChangeInstallationDirectory": false,
+			"runAfterFinish": true,
+			"deleteAppDataOnUninstall": false,
+			"installerSidebar": "build/installerSidebar.bmp",
+			"uninstallerSidebar": "build/installerSidebar.bmp",
+			"shortcutName": "Takeat Studio",
+			"artifactName": "TakeatStudio-Setup-${version}.${ext}"
+		}
+	}
+}

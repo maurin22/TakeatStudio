@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8" />
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
+		body {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		#pill {
+			position: relative;
+			width: 78px;
+			height: 30px;
+			border-radius: 999px;
+			overflow: hidden;
+			background: linear-gradient(160deg, rgba(60, 60, 70, 0.38), rgba(25, 25, 32, 0.45));
+			border: 1px solid rgba(255, 255, 255, 0.32);
+			box-shadow:
+				inset 0 1px 0 rgba(255, 255, 255, 0.32),
+				inset 0 -1px 1px rgba(0, 0, 0, 0.18),
+				0 6px 18px rgba(0, 0, 0, 0.3);
+		}
+		#sheen {
+			position: absolute;
+			left: 7%; right: 7%; top: 6%;
+			height: 44%;
+			border-radius: 999px;
+			background: linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0));
+		}
+		#content {
+			position: relative;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 7px;
+			height: 100%;
+			font: 600 12.5px "Segoe UI", system-ui, sans-serif;
+			color: #fff;
+			text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+		}
+		#dot {
+			width: 8px; height: 8px;
+			border-radius: 50%;
+			background: rgba(255, 255, 255, 0.55);
+			box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+			transition: background 0.25s ease, box-shadow 0.25s ease;
+			flex: none;
+		}
+		#dot.on {
+			background: #34d668;
+			box-shadow: 0 0 8px rgba(52, 214, 104, 0.95);
+		}
+		#label { line-height: 1; }
+	</style>
+</head>
+<body>
+	<div id="pill">
+		<div id="sheen"></div>
+		<div id="content"><span id="dot"></span><span id="label">1x</span></div>
+	</div>
+	<script>
+		const dot = document.getElementById('dot')
+		const label = document.getElementById('label')
+		window.overlay.onState((s) => {
+			dot.classList.toggle('on', s.zoomed)
+			label.textContent = `${s.zoomed ? s.scale : 1}x`
+		})
+	</script>
+</body>
+</html>

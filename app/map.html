@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8" />
+	<title>Takeat Map</title>
+	<style>
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Regular.otf'); font-weight: 400; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Bold.otf'); font-weight: 700; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-ExtraBold.otf'); font-weight: 800; }
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		html, body { width: 100%; height: 100%; overflow: hidden; }
+		body {
+			font-family: 'Vinila', 'Segoe UI', system-ui, sans-serif;
+			background: #1b1b1f;
+			color: #ebebee;
+			display: flex;
+			flex-direction: column;
+		}
+		button { font-family: inherit; }
+
+		/* ---------- barra superior ---------- */
+		#topbar {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			padding: 9px 14px;
+			background: rgba(30, 30, 34, 0.92);
+			backdrop-filter: blur(10px);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+			z-index: 20;
+		}
+		#topbar img { width: 22px; height: 22px; object-fit: contain; }
+		#topbar .logo { font-size: 15px; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; }
+		#topbar .logo em { font-style: normal; color: #ff5a5a; }
+		#board-name {
+			background: transparent;
+			border: 1px solid transparent;
+			border-radius: 8px;
+			color: #c9c9cf;
+			font: 700 13px 'Vinila', sans-serif;
+			padding: 6px 10px;
+			min-width: 110px;
+			max-width: 260px;
+			margin-left: 6px;
+		}
+		#board-name:hover { border-color: rgba(255, 255, 255, 0.12); }
+		#board-name:focus { outline: none; border-color: #e11d2e; background: rgba(255, 255, 255, 0.04); color: #fff; }
+		#topbar .grow { flex: 1; }
+		#topbar .sep { width: 1px; height: 22px; background: rgba(255, 255, 255, 0.1); margin: 0 4px; }
+		.tbtn {
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.13);
+			color: #c9c9cf;
+			border-radius: 9px;
+			padding: 7px 13px;
+			font-size: 12.5px;
+			font-weight: 700;
+			cursor: pointer;
+			white-space: nowrap;
+			transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+		}
+		.tbtn:hover { border-color: rgba(255, 90, 90, 0.7); color: #fff; }
+		.tbtn.primary {
+			background: #e11d2e;
+			border-color: transparent;
+			color: #fff;
+			padding: 7px 16px;
+			border-radius: 999px;
+			box-shadow: 0 4px 14px rgba(225, 29, 46, 0.35);
+		}
+		.tbtn.primary:hover { background: #c81627; }
+		.tbtn.ghost { border-color: transparent; color: #8f8f97; }
+		.tbtn.ghost:hover { color: #fff; border-color: rgba(255, 255, 255, 0.15); }
+		/* na galeria, botões que só fazem sentido com um quadro aberto somem */
+		body.in-gallery .canvas-only { display: none; }
+
+		/* ---------- galeria de mapas ---------- */
+		#gallery {
+			position: absolute;
+			inset: 0;
+			display: none;
+			flex-direction: column;
+			background:
+				radial-gradient(1000px 420px at 60% -10%, rgba(225, 29, 46, 0.09), transparent 60%),
+				#1b1b1f;
+			z-index: 15;
+			overflow-y: auto;
+			padding: 34px 42px;
+		}
+		body.in-gallery #gallery { display: flex; }
+		#gallery h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+		#gallery h1 em { font-style: normal; color: #ff5a5a; }
+		#gallery .sub { color: #8f8f97; font-size: 13px; margin: 4px 0 26px; }
+		#board-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+			gap: 16px;
+			align-content: start;
+		}
+		.bcard {
+			position: relative;
+			background: rgba(255, 255, 255, 0.04);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 14px;
+			padding: 18px;
+			cursor: pointer;
+			text-align: left;
+			color: inherit;
+			min-height: 128px;
+			display: flex;
+			flex-direction: column;
+			transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+		}
+		.bcard:hover { border-color: #ff5a5a; transform: translateY(-3px); background: rgba(255, 90, 90, 0.06); }
+		.bcard.new {
+			align-items: center;
+			justify-content: center;
+			border-style: dashed;
+			border-color: rgba(255, 255, 255, 0.2);
+			color: #9a9aa2;
+			gap: 8px;
+		}
+		.bcard.new:hover { border-color: #ff5a5a; color: #fff; }
+		.bcard.new .plus { font-size: 30px; font-weight: 400; color: #ff5a5a; line-height: 1; }
+		.bcard .bname {
+			font-size: 14.5px;
+			font-weight: 700;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.bcard .bmeta { color: #8f8f97; font-size: 11.5px; margin-top: 4px; }
+		.bcard .bdots { display: flex; gap: 5px; margin-top: auto; padding-top: 16px; }
+		.bcard .bdots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+		.bcard .bdel {
+			position: absolute;
+			top: 10px; right: 10px;
+			background: transparent;
+			border: none;
+			color: transparent;
+			cursor: pointer;
+			padding: 4px;
+			display: flex;
+			border-radius: 7px;
+		}
+		.bcard:hover .bdel { color: #8f8f97; }
+		.bcard .bdel:hover { color: #ff5a5a; background: rgba(255, 90, 90, 0.1); }
+		.bcard .bdel svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.9; }
+
+		/* ---------- boas-vindas ---------- */
+		#welcome {
+			position: absolute;
+			inset: 0;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			background: rgba(10, 10, 12, 0.72);
+			backdrop-filter: blur(5px);
+			z-index: 50;
+		}
+		#welcome.show { display: flex; }
+		#welcome .card {
+			width: 460px;
+			max-width: calc(100vw - 60px);
+			background: #232328;
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 18px;
+			padding: 30px 32px 26px;
+			box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+		}
+		#welcome h2 { font-size: 19px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+		#welcome h2 em { font-style: normal; color: #ff5a5a; }
+		#welcome .lead { color: #9a9aa2; font-size: 13px; margin-bottom: 18px; }
+		#welcome ul { list-style: none; display: flex; flex-direction: column; gap: 11px; margin-bottom: 24px; }
+		#welcome li { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; color: #d6d6dc; }
+		#welcome kbd {
+			background: rgba(255, 255, 255, 0.07);
+			border: 1px solid rgba(255, 255, 255, 0.16);
+			border-radius: 6px;
+			padding: 2px 8px;
+			font: 700 11.5px 'Vinila', sans-serif;
+			color: #ff8181;
+			white-space: nowrap;
+			flex: none;
+			min-width: 86px;
+			text-align: center;
+		}
+		#welcome .go {
+			width: 100%;
+			background: #e11d2e;
+			border: none;
+			color: #fff;
+			border-radius: 11px;
+			padding: 12px;
+			font-size: 14px;
+			font-weight: 800;
+			cursor: pointer;
+			box-shadow: 0 6px 18px rgba(225, 29, 46, 0.35);
+		}
+		#welcome .go:hover { background: #c81627; }
+
+		/* ---------- canvas ---------- */
+		#viewport {
+			position: relative;
+			flex: 1;
+			overflow: hidden;
+			cursor: grab;
+			background-color: #232327;
+			background-image: radial-gradient(circle, rgba(255, 255, 255, 0.11) 1.2px, transparent 1.2px);
+			background-size: 26px 26px;
+		}
+		#viewport.panning { cursor: grabbing; }
+		#world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+		#edges { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
+		#edges path {
+			fill: none;
+			stroke: rgba(255, 255, 255, 0.3);
+			stroke-width: 2.5;
+			stroke-linecap: round;
+		}
+		#edges path.sel { stroke: #ff5a5a; }
+
+		.node {
+			position: absolute;
+			width: max-content;
+			max-width: 280px;
+			padding: 10px 16px;
+			border-radius: 11px;
+			border: 1px solid rgba(0, 0, 0, 0.35);
+			font-size: 14px;
+			font-weight: 700;
+			line-height: 1.35;
+			text-align: center;
+			cursor: default;
+			user-select: none;
+			box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px rgba(0, 0, 0, 0.22);
+			transition: box-shadow 0.12s ease;
+		}
+		.node:hover { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.3); }
+		.node .txt { outline: none; white-space: pre-wrap; word-break: break-word; }
+		.node.selected {
+			box-shadow: 0 0 0 2.5px #ff5a5a, 0 8px 24px rgba(225, 29, 46, 0.3);
+		}
+		.node.editing { cursor: text; user-select: text; }
+
+		/* bolinhas de conexão nas laterais do card */
+		.node .hdl {
+			position: absolute;
+			width: 12px; height: 12px;
+			border-radius: 50%;
+			background: #ff5a5a;
+			border: 2px solid #fff;
+			opacity: 0;
+			transition: opacity 0.12s ease, transform 0.12s ease;
+			cursor: crosshair;
+			z-index: 2;
+		}
+		.node:hover .hdl, .node.selected .hdl { opacity: 1; }
+		.node .hdl:hover { transform: scale(1.35); }
+		.hdl.l { left: -7px; top: 50%; margin-top: -6px; }
+		.hdl.r { right: -7px; top: 50%; margin-top: -6px; }
+		.hdl.t { top: -7px; left: 50%; margin-left: -6px; }
+		.hdl.b { bottom: -7px; left: 50%; margin-left: -6px; }
+		#edges path.preview { stroke: #ff5a5a; stroke-dasharray: 7 7; }
+
+		/* retângulos de área (agrupam cards) */
+		.rect {
+			position: absolute;
+			border: 1.5px dashed rgba(255, 90, 90, 0.55);
+			background: rgba(255, 255, 255, 0.03);
+			border-radius: 14px;
+			pointer-events: none;
+		}
+		.rect.selected { border-style: solid; border-color: #ff5a5a; box-shadow: 0 0 0 1px rgba(255, 90, 90, 0.3); }
+		.rect .rtag {
+			position: absolute;
+			top: -13px; left: 14px;
+			pointer-events: auto;
+			background: #2a2a30;
+			border: 1px solid rgba(255, 90, 90, 0.55);
+			border-radius: 999px;
+			padding: 3px 12px;
+			font-size: 11.5px;
+			font-weight: 700;
+			color: #ff8181;
+			cursor: grab;
+			user-select: none;
+			white-space: nowrap;
+		}
+		.rect .rtag:active { cursor: grabbing; }
+		.rect .rtag[contenteditable="true"] { cursor: text; user-select: text; color: #fff; }
+		.rect .rgrip {
+			position: absolute;
+			right: -3px; bottom: -3px;
+			width: 16px; height: 16px;
+			pointer-events: auto;
+			cursor: nwse-resize;
+			border-right: 3px solid rgba(255, 90, 90, 0.8);
+			border-bottom: 3px solid rgba(255, 90, 90, 0.8);
+			border-radius: 0 0 10px 0;
+		}
+		#viewport.rect-mode { cursor: crosshair; }
+		.tbtn.active { border-color: #ff5a5a; color: #fff; background: rgba(255, 90, 90, 0.12); }
+
+		/* ---------- toolbar flutuante do nó ---------- */
+		#node-toolbar {
+			position: absolute;
+			display: none;
+			align-items: center;
+			gap: 8px;
+			padding: 8px 12px;
+			background: rgba(32, 32, 37, 0.96);
+			backdrop-filter: blur(12px);
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 12px;
+			box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+			z-index: 30;
+		}
+		#node-toolbar .child-btn {
+			background: rgba(225, 29, 46, 0.15);
+			border: 1px solid rgba(255, 90, 90, 0.5);
+			color: #ff8181;
+			border-radius: 8px;
+			padding: 5px 11px;
+			font-size: 12px;
+			font-weight: 700;
+			cursor: pointer;
+			white-space: nowrap;
+		}
+		#node-toolbar .child-btn:hover { background: rgba(225, 29, 46, 0.3); color: #fff; }
+		#node-toolbar .tsep { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.12); }
+		#node-toolbar .dot {
+			width: 17px; height: 17px;
+			border-radius: 50%;
+			border: 2px solid rgba(255, 255, 255, 0.22);
+			cursor: pointer;
+			padding: 0;
+			transition: transform 0.1s ease, border-color 0.1s ease;
+		}
+		#node-toolbar .dot:hover { border-color: #fff; transform: scale(1.18); }
+		#node-toolbar .del {
+			background: transparent;
+			border: none;
+			color: #8f8f97;
+			cursor: pointer;
+			padding: 3px;
+			display: flex;
+		}
+		#node-toolbar .del:hover { color: #ff5a5a; }
+		#node-toolbar .del svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.9; }
+
+		/* ---------- zoom e dica ---------- */
+		#zoombar {
+			position: absolute;
+			right: 14px; bottom: 14px;
+			display: flex;
+			align-items: center;
+			gap: 2px;
+			background: rgba(32, 32, 37, 0.92);
+			backdrop-filter: blur(10px);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 11px;
+			padding: 3px;
+			z-index: 14;
+		}
+		#zoombar button {
+			width: 28px; height: 28px;
+			background: transparent;
+			border: none;
+			color: #c9c9cf;
+			font-size: 16px;
+			font-weight: 700;
+			cursor: pointer;
+			border-radius: 8px;
+		}
+		#zoombar button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+		#zoom-label {
+			font-size: 11.5px;
+			color: #8f8f97;
+			min-width: 42px;
+			text-align: center;
+			cursor: pointer;
+			border-radius: 6px;
+			padding: 5px 2px;
+		}
+		#zoom-label:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+		#hint {
+			position: absolute;
+			left: 50%; bottom: 16px;
+			transform: translateX(-50%);
+			background: rgba(32, 32, 37, 0.85);
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 999px;
+			padding: 7px 16px;
+			font-size: 11px;
+			color: #8f8f97;
+			white-space: nowrap;
+			z-index: 14;
+			pointer-events: none;
+		}
+		#hint b { color: #ff7a7a; font-weight: 700; }
+	</style>
+</head>
+<body class="in-gallery">
+	<div id="topbar">
+		<img src="assets/takeat-icon.png" alt="Takeat" />
+		<span class="logo">Takeat <em>Map</em></span>
+		<input id="board-name" class="canvas-only" value="Meu mapa" spellcheck="false" />
+		<div class="grow"></div>
+		<button class="tbtn primary canvas-only" id="btn-add">+ Nó</button>
+		<button class="tbtn canvas-only" id="btn-rect">&#9645; Retângulo</button>
+		<button class="tbtn canvas-only" id="btn-fit">Centralizar</button>
+		<div class="sep canvas-only"></div>
+		<button class="tbtn canvas-only" id="btn-boards">Meus mapas</button>
+		<button class="tbtn canvas-only" id="btn-save">Salvar</button>
+		<button class="tbtn" id="btn-open">Importar</button>
+		<div class="sep"></div>
+		<button class="tbtn ghost" id="btn-help">?</button>
+		<button class="tbtn ghost" id="btn-back">&larr; Trocar de app</button>
+	</div>
+	<div id="viewport">
+		<div id="world">
+			<div id="rects"></div>
+			<svg id="edges"></svg>
+			<div id="nodes"></div>
+		</div>
+		<div id="node-toolbar"></div>
+		<div id="zoombar">
+			<button id="zoom-out">&minus;</button>
+			<span id="zoom-label" title="Voltar pra 100%">100%</span>
+			<button id="zoom-in">+</button>
+		</div>
+		<div id="hint"><b>Duplo clique</b> novo nó &nbsp; <b>Bolinha</b> arrasta conexão &nbsp; <b>Tab</b> filho &nbsp; <b>Enter</b> irmão &nbsp; <b>Delete</b> apagar</div>
+		<div id="gallery">
+			<h1>Meus <em>mapas</em></h1>
+			<p class="sub">Crie um mapa novo ou continue de onde parou. Tudo fica salvo automaticamente.</p>
+			<div id="board-grid"></div>
+		</div>
+	</div>
+	<div id="welcome">
+		<div class="card">
+			<h2>Bem-vindo ao Takeat <em>Map</em> ❤️</h2>
+			<p class="lead">Seu quadro infinito pra organizar ideias. O básico em 30 segundos:</p>
+			<ul>
+				<li><kbd>Duplo clique</kbd> no fundo cria um nó; num nó, edita o texto</li>
+				<li><kbd>Tab</kbd> cria um filho conectado ao nó selecionado</li>
+				<li><kbd>Enter</kbd> cria um irmão do nó selecionado</li>
+				<li><kbd>Bolinhas</kbd> arraste da lateral de um nó até outro pra conectar</li>
+				<li><kbd>Retângulo</kbd> desenhe áreas pra agrupar; mover a área leva os nós juntos</li>
+				<li><kbd>Arrastar borda</kbd> ajusta a largura do nó</li>
+				<li><kbd>Scroll</kbd> dá zoom; arraste o fundo pra navegar</li>
+			</ul>
+			<button class="go" id="welcome-go">Começar a mapear</button>
+		</div>
+	</div>
+	<script src="map.js"></script>
+</body>
+</html>

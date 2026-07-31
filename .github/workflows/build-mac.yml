@@ -1,0 +1,39 @@
+name: Build macOS
+
+# Gera o instalador do Takeat Studio pra Mac (Cam + Map).
+# Roda manualmente (aba Actions -> Build macOS -> Run workflow)
+# ou automaticamente ao criar uma tag v* (ex.: v0.4.0).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependências
+        working-directory: app
+        run: npm ci
+
+      - name: Empacotar (.dmg universal, Intel + Apple Silicon)
+        working-directory: app
+        env:
+          # sem certificado de assinatura: gera app não assinado
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac
+
+      - name: Publicar instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: TakeatStudio-mac
+          path: |
+            app/release/*.dmg
+          if-no-files-found: error

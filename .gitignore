@@ -1,0 +1,10 @@
+node_modules/
+release/
+dist/
+dist-electron/
+out/
+.tmp/
+*.log
+
+# clone do Recordly original (só referência local, não vai pro repo)
+recordly/

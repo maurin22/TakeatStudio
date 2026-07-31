@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8" />
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
+		#wrap { position: absolute; left: 8px; top: 8px; }
+		#wrap img { display: block; position: relative; }
+		@property --lzangle {
+			syntax: '<angle>';
+			initial-value: 0deg;
+			inherits: false;
+		}
+		.rgb-outline { position: absolute; inset: 0; }
+		.rgb-outline i {
+			position: absolute;
+			inset: 0;
+			background: conic-gradient(from var(--lzangle), #ff004c, #ff9900, #ffee00, #33ff66, #00cfff, #6633ff, #ff00cc, #ff004c);
+			-webkit-mask-size: 100% 100%;
+			-webkit-mask-repeat: no-repeat;
+			transform: translate(var(--dx), var(--dy));
+			animation: spinangle 1.6s linear infinite;
+		}
+		@keyframes spinangle { to { --lzangle: 360deg; } }
+	</style>
+</head>
+<body>
+	<div id="wrap"></div>
+	<script>
+		const wrap = document.getElementById('wrap')
+		// Desenha o cursor escolhido com a PONTA no ponto fixo (8,8) da janela;
+		// o processo principal posiciona a janela em (mouse - 8, mouse - 8)
+		window.cursorwin.onStyle((s) => {
+			wrap.innerHTML = ''
+			wrap.style.left = '8px'
+			wrap.style.top = '8px'
+			if (!s || !s.img) return
+			if (s.led) {
+				const outline = document.createElement('div')
+				outline.className = 'rgb-outline'
+				for (let k = 0; k < 8; k++) {
+					const i = document.createElement('i')
+					const a = (k * Math.PI) / 4
+					i.style.setProperty('--dx', `${(Math.cos(a) * 1.8).toFixed(2)}px`)
+					i.style.setProperty('--dy', `${(Math.sin(a) * 1.8).toFixed(2)}px`)
+					i.style.webkitMaskImage = `url(${s.img})`
+					outline.appendChild(i)
+				}
+				wrap.appendChild(outline)
+			}
+			const img = document.createElement('img')
+			img.style.height = `${s.size}px`
+			img.addEventListener('load', () => {
+				const w = s.size * (img.naturalWidth / img.naturalHeight)
+				wrap.style.left = `${8 - s.hotspot.x * w}px`
+				wrap.style.top = `${8 - s.hotspot.y * s.size}px`
+			})
+			img.src = s.img
+			wrap.appendChild(img)
+		})
+	</script>
+</body>
+</html>

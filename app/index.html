@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8" />
+	<title>Takeat Cam</title>
+	<style>
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Thin.otf'); font-weight: 100; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-ThinOblique.otf'); font-weight: 100; font-style: italic; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Light.otf'); font-weight: 300; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-LightOblique.otf'); font-weight: 300; font-style: italic; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Regular.otf'); font-weight: 400; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Oblique.otf'); font-weight: 400; font-style: italic; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Bold.otf'); font-weight: 700; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-BoldOblique.otf'); font-weight: 700; font-style: italic; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-ExtraBold.otf'); font-weight: 800; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-ExtraBoldOblique.otf'); font-weight: 800; font-style: italic; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-Black.otf'); font-weight: 900; font-style: normal; }
+		@font-face { font-family: 'Vinila'; src: url('fonts/Vinila-BlackOblique.otf'); font-weight: 900; font-style: italic; }
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+		body { font: 14px/1.5 'Vinila', "Segoe UI", system-ui, sans-serif; }
+		#viewport { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+		#screen {
+			position: absolute;
+			top: 0; left: 0;
+			width: 100%; height: 100%;
+			transform-origin: 0 0;
+			will-change: transform;
+		}
+		#cursor {
+			position: absolute;
+			top: 0; left: 0;
+			pointer-events: none;
+			will-change: transform;
+			display: none;
+		}
+		#cursor.on { display: block; }
+		/* Outline arco-íris no contorno do cursor: cópias da silhueta (via
+		   mask com o próprio PNG) preenchidas com conic-gradient girante,
+		   deslocadas em 8 direções atrás da imagem = linha colorida na borda */
+		.rgb-outline { position: absolute; inset: 0; }
+		.rgb-outline i {
+			position: absolute;
+			inset: 0;
+			background: conic-gradient(from var(--lzangle), #ff004c, #ff9900, #ffee00, #33ff66, #00cfff, #6633ff, #ff00cc, #ff004c);
+			-webkit-mask-size: 100% 100%;
+			-webkit-mask-repeat: no-repeat;
+			transform: translate(var(--dx), var(--dy));
+			animation: ccardspin 1.6s linear infinite;
+		}
+		@keyframes ledhue {
+			from { filter: hue-rotate(0deg); }
+			to { filter: hue-rotate(360deg); }
+		}
+		#hud {
+			position: absolute;
+			left: 50%; bottom: 18px;
+			transform: translateX(-50%);
+			background: rgba(12, 12, 14, 0.82);
+			color: #eee;
+			font-size: 13px;
+			padding: 10px 18px;
+			border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			opacity: 0;
+			transition: opacity 0.35s ease;
+			pointer-events: none;
+			white-space: nowrap;
+		}
+		#hud.show { opacity: 1; }
+		#hud b { color: #ff5a5a; font-weight: 600; }
+
+		/* ---------- tema claro ---------- */
+		body.light #picker {
+			background:
+				radial-gradient(1200px 500px at 70% -10%, rgba(225, 29, 46, 0.08), transparent 60%),
+				rgba(246, 246, 248, 0.98);
+			color: #1f1f24;
+		}
+		body.light .brand .logo { color: #1f1f24; }
+		body.light .brand .tag { color: #6d6d75; }
+		body.light .backbtn { border-color: rgba(0, 0, 0, 0.16); color: #55555e; }
+		body.light .backbtn:hover { border-color: #e11d2e; color: #1f1f24; }
+		body.light h2, body.light details.panel > summary { color: #6d6d75; }
+		body.light .panel { background: #ffffff; border-color: rgba(0, 0, 0, 0.09); }
+		body.light .chip { background: #f2f2f4; border-color: rgba(0, 0, 0, 0.12); color: #44444c; }
+		body.light .chip.active { border-color: #e11d2e; color: #1f1f24; background: rgba(225, 29, 46, 0.08); }
+		body.light .kbd-btn { background: #f2f2f4; border-color: rgba(0, 0, 0, 0.14); color: #1f1f24; }
+		body.light .keyrow { color: #44444c; }
+		body.light .hint { color: #8b8b93; }
+		body.light .current { color: #b3121f; background: rgba(225, 29, 46, 0.08); border-color: rgba(225, 29, 46, 0.35); }
+		body.light .card, body.light .step, body.light .ccard { background: #ffffff; border-color: rgba(0, 0, 0, 0.1); }
+		body.light .card span, body.light .ccard span { color: #44444c; }
+		body.light .step p { color: #6d6d75; }
+		body.light .step h3 { color: #1f1f24; }
+		body.light .step svg.ill { background: #ececef; }
+		body.light details.panel > summary::after { border-color: #9a9aa2; }
+		body.light #picker::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); }
+
+		/* ---------- tela de configurações ---------- */
+		#picker {
+			position: absolute;
+			inset: 0;
+			background:
+				radial-gradient(1200px 500px at 70% -10%, rgba(225, 29, 46, 0.14), transparent 60%),
+				rgba(9, 9, 11, 0.97);
+			color: #eee;
+			overflow-y: auto;
+			padding: 30px 36px 40px;
+			display: none;
+		}
+		#picker.show { display: block; }
+		#picker::-webkit-scrollbar { width: 10px; }
+		#picker::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 5px; }
+
+		.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+		.brand .brandlogo { width: 30px; height: 30px; object-fit: contain; }
+		.brand .logo {
+			font-size: 21px;
+			font-weight: 700;
+			letter-spacing: -0.02em;
+		}
+		.brand .logo em { font-style: normal; color: #ff5a5a; }
+		.brand .tag { color: #8b8b93; font-size: 13px; }
+		.backbtn {
+			margin-left: auto;
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.16);
+			color: #c6c6cc;
+			border-radius: 8px;
+			padding: 6px 14px;
+			font: 12.5px "Segoe UI", system-ui, sans-serif;
+			cursor: pointer;
+			transition: border-color 0.15s ease, color 0.15s ease;
+			white-space: nowrap;
+		}
+		.backbtn:hover { border-color: #ff5a5a; color: #fff; }
+
+		h2 {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 12px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+			color: #9a9aa2;
+			margin-bottom: 12px;
+		}
+		h2 svg { width: 15px; height: 15px; stroke: #ff5a5a; fill: none; stroke-width: 1.8; flex: none; }
+		h2 .kbd {
+			margin-left: auto;
+			text-transform: none;
+			letter-spacing: 0;
+			font-weight: 500;
+			color: #6d6d75;
+			font-size: 11px;
+		}
+
+		.settings {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+			gap: 16px;
+			margin-bottom: 26px;
+		}
+		.panel {
+			background: rgba(255, 255, 255, 0.035);
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 14px;
+			padding: 16px 18px;
+		}
+		.panel.wide { grid-column: 1 / -1; }
+
+		.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+		.chip {
+			background: #17171a;
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			color: #ccc;
+			padding: 7px 15px;
+			border-radius: 999px;
+			font-size: 13px;
+			font-family: inherit;
+			cursor: pointer;
+			transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+		}
+		.chip:hover { border-color: #ff5a5a; }
+		.chip.active { border-color: #ff5a5a; color: #fff; background: rgba(255, 90, 90, 0.13); }
+		.chip svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; vertical-align: -2px; margin-right: 6px; }
+
+		.keys { display: grid; gap: 2px; }
+		.keyrow {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 4px 0;
+			font-size: 13px;
+			color: #c6c6cc;
+		}
+		.kbd-btn {
+			background: #17171a;
+			border: 1px solid rgba(255, 255, 255, 0.14);
+			border-radius: 8px;
+			padding: 4px 12px;
+			font: 12px Consolas, monospace;
+			color: #eee;
+			cursor: pointer;
+			min-width: 96px;
+			transition: border-color 0.15s ease, color 0.15s ease;
+		}
+		.kbd-btn:hover { border-color: #ff5a5a; }
+		.kbd-btn.editing { border-color: #ff5a5a; color: #ff5a5a; }
+		.hint { color: #77777e; font-size: 11.5px; margin-top: 10px; }
+		.prefrow { margin-top: 12px; }
+		.preflabel {
+			display: block;
+			font-size: 11px;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+			color: #8b8b93;
+			margin-bottom: 8px;
+		}
+
+		details.panel > summary {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 12px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+			color: #9a9aa2;
+			cursor: pointer;
+			list-style: none;
+			user-select: none;
+		}
+		details.panel > summary::-webkit-details-marker { display: none; }
+		details.panel > summary svg { width: 15px; height: 15px; stroke: #ff5a5a; fill: none; stroke-width: 1.8; flex: none; }
+		details.panel > summary .spacer { flex: 1; }
+		details.panel > summary::after {
+			content: '';
+			margin-left: 10px;
+			width: 7px; height: 7px;
+			border-right: 1.8px solid #6d6d75;
+			border-bottom: 1.8px solid #6d6d75;
+			transform: rotate(45deg) translateY(-2px);
+			transition: transform 0.2s ease;
+			flex: none;
+		}
+		details.panel[open] > summary::after { transform: rotate(-135deg); }
+		details.panel > *:not(summary) { margin-top: 14px; }
+		details.panel > .hint { margin-top: 10px; }
+		.current {
+			text-transform: none;
+			letter-spacing: 0;
+			font-size: 12px;
+			font-weight: 600;
+			color: #fff;
+			background: rgba(255, 90, 90, 0.13);
+			border: 1px solid rgba(255, 90, 90, 0.4);
+			padding: 2px 10px;
+			border-radius: 999px;
+		}
+
+		.steps {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 14px;
+		}
+		.step {
+			background: #17171a;
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 12px;
+			padding: 14px;
+		}
+		.step svg.ill {
+			width: 100%;
+			border-radius: 8px;
+			background: #0e0e11;
+			margin-bottom: 10px;
+			display: block;
+		}
+		.step .n { color: #ff5a5a; font-weight: 700; font-size: 12px; }
+		.step h3 { font-size: 13.5px; color: #fff; margin: 2px 0 4px; font-weight: 600; }
+		.step p { font-size: 12px; color: #9a9aa2; line-height: 1.55; }
+		.step p b { color: #ddd; font-weight: 600; }
+
+		.cursor-cards { display: flex; gap: 10px; flex-wrap: wrap; }
+		.ccard {
+			width: 96px;
+			padding: 14px 8px 10px;
+			background: #17171a;
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 12px;
+			font-family: inherit;
+			cursor: pointer;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 9px;
+			transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+		}
+		.ccard:hover { border-color: #ff5a5a; transform: translateY(-2px); }
+		.ccard.active { border-color: #ff5a5a; background: rgba(255, 90, 90, 0.1); }
+		@property --lzangle {
+			syntax: '<angle>';
+			initial-value: 0deg;
+			inherits: false;
+		}
+		.ccard.led.active {
+			border-color: transparent;
+			background:
+				linear-gradient(#221619, #221619) padding-box,
+				conic-gradient(from var(--lzangle), #ff004c, #ff9900, #ffee00, #33ff66, #00cfff, #6633ff, #ff00cc, #ff004c) border-box;
+			animation: ccardspin 1.6s linear infinite;
+		}
+		.ccard.led .preview img { animation: ledhue 1.6s linear infinite; }
+		@keyframes ccardspin { to { --lzangle: 360deg; } }
+		.ccard .preview { height: 34px; display: flex; align-items: center; justify-content: center; }
+		.ccard .preview img { height: 32px; display: block; }
+		.ccard span { font-size: 11.5px; color: #c6c6cc; }
+		.ccard.active span { color: #fff; }
+
+		.grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+			gap: 14px;
+			margin-bottom: 24px;
+		}
+		.card {
+			background: #17171a;
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 10px;
+			overflow: hidden;
+			cursor: pointer;
+			transition: border-color 0.15s ease, transform 0.15s ease;
+		}
+		.card:hover { border-color: #ff5a5a; transform: translateY(-2px); }
+		.card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
+		.card span {
+			display: block;
+			padding: 8px 10px;
+			font-size: 12px;
+			color: #ccc;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+	</style>
+</head>
+<body>
+	<div id="viewport">
+		<video id="screen" autoplay muted></video>
+		<div id="cursor"></div>
+		<div id="hud"></div>
+		<div id="picker">
+			<div class="brand">
+				<img class="brandlogo" src="assets/takeat-icon.png" alt="Takeat" />
+				<div class="logo">Takeat <em>Cam</em></div>
+				<div class="tag" data-i18n="tag">Apresente o sistema Takeat com zoom: escolha a fonte e compartilhe a janela do Takeat Cam no Meet</div>
+				<button id="back-launcher" class="backbtn" data-i18n="back">&larr; Trocar de app</button>
+			</div>
+			<div class="settings">
+				<details class="panel">
+					<summary>
+						<svg viewBox="0 0 24 24"><path d="M4 19v-5M9.5 19v-9M15 19V6M20.5 19v-13" stroke-linecap="round"/></svg>
+						<span data-i18n="secQuality">Qualidade</span>
+						<span class="spacer"></span>
+						<span class="current" id="quality-current"></span>
+					</summary>
+					<div id="quality" class="chips"></div>
+				</details>
+				<details class="panel">
+					<summary>
+						<svg viewBox="0 0 24 24"><path d="M2 12c2.6-5 5.1 5 7.7 0s5.1 5 7.7 0 4.6 3 4.6 3" stroke-linecap="round"/></svg>
+						<span data-i18n="secSmooth">Suavidade do cursor</span>
+						<span class="spacer"></span>
+						<span class="current" id="ease-current"></span>
+					</summary>
+					<div id="cursor-ease" class="chips"></div>
+				</details>
+				<details class="panel">
+					<summary>
+						<svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" stroke-linecap="round"/></svg>
+						<span data-i18n="secKeys">Atalhos</span>
+						<span class="spacer"></span>
+					</summary>
+					<div id="keybinds" class="keys"></div>
+					<p class="hint" data-i18n="keysHint">Clique num atalho e pressione a nova tecla. Sempre Alt + letra ou número.</p>
+				</details>
+				<details class="panel">
+					<summary>
+						<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke-linecap="round"/></svg>
+						<span data-i18n="secPrefs">Preferências</span>
+						<span class="spacer"></span>
+					</summary>
+					<div class="prefrow"><span class="preflabel" data-i18n="themeLabel">Tema</span><div id="theme-chips" class="chips"></div></div>
+					<div class="prefrow"><span class="preflabel" data-i18n="langLabel">Idioma</span><div id="lang-chips" class="chips"></div></div>
+				</details>
+				<div class="panel wide">
+					<h2>
+						<svg viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.8L9 19z" stroke-linejoin="round"/></svg>
+						<span data-i18n="secCursor">Cursor</span>
+					</h2>
+					<div id="cursor-style" class="cursor-cards"></div>
+				</div>
+				<details class="panel wide">
+					<summary>
+						<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M12 11v5" stroke-linecap="round"/></svg>
+						<span data-i18n="secTutorial">Tutorial: como compartilhar no Meet</span>
+						<span class="spacer"></span>
+					</summary>
+					<div class="steps">
+						<div class="step">
+							<svg class="ill" viewBox="0 0 220 124">
+								<rect x="14" y="12" width="192" height="100" rx="8" fill="#141416" stroke="#2a2a2e"/>
+								<circle cx="26" cy="24" r="3" fill="#ff5a5a"/>
+								<text x="36" y="28" fill="#ddd" font-size="10" font-weight="700" font-family="Segoe UI">Takeat Cam</text>
+								<rect x="26" y="40" width="52" height="34" rx="4" fill="#1f1f23" stroke="#ff5a5a" stroke-width="1.5"/>
+								<text x="30" y="86" fill="#999" font-size="8" font-family="Segoe UI">Chrome</text>
+								<rect x="86" y="40" width="52" height="34" rx="4" fill="#1f1f23" stroke="#333"/>
+								<rect x="146" y="40" width="52" height="34" rx="4" fill="#1f1f23" stroke="#333"/>
+							</svg>
+							<div class="n"><span data-i18n="step">PASSO</span> 1</div>
+							<h3 data-i18n="s1t">Escolha a fonte aqui</h3>
+							<p data-i18n="s1p">Abra o Takeat Cam e clique na <b>tela ou janela</b> que quer transmitir (ex.: o Chrome com o sistema Takeat aberto). A janela do app vira o espelho com zoom.</p>
+						</div>
+						<div class="step">
+							<svg class="ill" viewBox="0 0 220 124">
+								<rect x="14" y="96" width="192" height="20" rx="10" fill="#141416" stroke="#2a2a2e"/>
+								<circle cx="50" cy="106" r="7" fill="#26262b"/>
+								<circle cx="74" cy="106" r="7" fill="#26262b"/>
+								<rect x="96" y="98" width="16" height="16" rx="4" fill="#ff5a5a"/>
+								<path d="M104 110v-7m0 0l-3 3m3-3l3 3" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+								<circle cx="134" cy="106" r="7" fill="#26262b"/>
+								<rect x="62" y="16" width="96" height="66" rx="7" fill="#1b1b1f" stroke="#2f2f34"/>
+								<text x="72" y="34" fill="#888" font-size="9" font-family="Segoe UI">O dispositivo inteiro</text>
+								<rect x="68" y="42" width="84" height="16" rx="4" fill="rgba(255,90,90,0.14)" stroke="#ff5a5a"/>
+								<text x="72" y="53" fill="#fff" font-size="9" font-weight="700" font-family="Segoe UI">Uma janela</text>
+								<text x="72" y="74" fill="#888" font-size="9" font-family="Segoe UI">Uma guia</text>
+								<path d="M104 96v-8" stroke="#ff5a5a" stroke-width="1.4" stroke-dasharray="3 2"/>
+							</svg>
+							<div class="n"><span data-i18n="step">PASSO</span> 2</div>
+							<h3 data-i18n="s2t">No Meet, apresente uma janela</h3>
+							<p data-i18n="s2p">Na chamada, clique em <b>Apresentar agora</b> (ícone da setinha) e escolha <b>Uma janela</b>. <b style="color:#ff5a5a">Nunca "O dispositivo inteiro".</b></p>
+						</div>
+						<div class="step">
+							<svg class="ill" viewBox="0 0 220 124">
+								<rect x="14" y="12" width="192" height="100" rx="8" fill="#141416" stroke="#2a2a2e"/>
+								<text x="26" y="30" fill="#ccc" font-size="9" font-family="Segoe UI">Escolha o que compartilhar</text>
+								<rect x="26" y="40" width="52" height="40" rx="4" fill="#1f1f23" stroke="#333"/>
+								<rect x="86" y="40" width="52" height="40" rx="4" fill="#1f1f23" stroke="#ff5a5a" stroke-width="1.6"/>
+								<circle cx="112" cy="54" r="6" fill="#ff5a5a"/>
+								<text x="93" y="72" fill="#fff" font-size="8" font-weight="700" font-family="Segoe UI">Takeat Cam</text>
+								<rect x="146" y="40" width="52" height="40" rx="4" fill="#1f1f23" stroke="#333"/>
+								<rect x="76" y="89" width="72" height="16" rx="8" fill="#ff5a5a"/>
+								<text x="112" y="100" fill="#fff" font-size="8" font-weight="700" font-family="Segoe UI" text-anchor="middle">Compartilhar</text>
+							</svg>
+							<div class="n"><span data-i18n="step">PASSO</span> 3</div>
+							<h3 data-i18n="s3t">Selecione a janela Takeat Cam</h3>
+							<p data-i18n="s3p">Na lista de janelas, escolha <b>Takeat Cam</b> e confirme. Quem assiste vê a janela do app, com o sistema já ampliado e o cursor destacado.</p>
+						</div>
+						<div class="step">
+							<svg class="ill" viewBox="0 0 220 124">
+								<rect x="30" y="44" width="42" height="30" rx="6" fill="#1f1f23" stroke="#4a4a52"/>
+								<text x="42" y="63" fill="#eee" font-size="11" font-weight="700" font-family="Consolas">Alt</text>
+								<text x="80" y="64" fill="#777" font-size="12" font-family="Segoe UI">+</text>
+								<rect x="94" y="44" width="30" height="30" rx="6" fill="#1f1f23" stroke="#4a4a52"/>
+								<text x="104" y="63" fill="#eee" font-size="11" font-weight="700" font-family="Consolas">Z</text>
+								<rect x="142" y="48" width="52" height="22" rx="11" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.2)"/>
+								<circle cx="156" cy="59" r="4" fill="#ff4646"/>
+								<text x="165" y="63" fill="#eee" font-size="10" font-weight="700" font-family="Segoe UI">2x</text>
+							</svg>
+							<div class="n"><span data-i18n="step">PASSO</span> 4</div>
+							<h3 data-i18n="s4t">Apresente com os atalhos</h3>
+							<p data-i18n="s4p">Volte pro sistema Takeat e use <b>Alt+Z</b> pra dar zoom onde o mouse está e <b>Alt+X</b> pra soltar. O indicador no canto mostra o estado (só você vê ele).</p>
+						</div>
+					</div>
+				</details>
+			</div>
+			<div id="picker-content"></div>
+		</div>
+	</div>
+	<script src="renderer.js"></script>
+</body>
+</html>
