@@ -1,7 +1,7 @@
 {
 	"name": "takeatcam",
 	"productName": "Takeat Studio",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"description": "Espelho da tela com zoom suave ao vivo. Compartilhe a janela do Takeat Cam no Meet/OBS e transmita com zoom nos pontos certos.",
 	"author": "Takeat",
 	"main": "main.js",
@@ -44,6 +44,7 @@
 			"cursors/**",
 			"fonts/**"
 		],
+		"afterPack": "build/after-pack.js",
 		"asarUnpack": [
 			"node_modules/koffi/**"
 		],
@@ -78,14 +79,15 @@
 				{
 					"target": "dmg",
 					"arch": [
-						"universal"
+						"arm64",
+						"x64"
 					]
 				}
 			],
 			"icon": "build/icon.png",
 			"category": "public.app-category.productivity",
 			"identity": null,
-			"artifactName": "TakeatStudio-${version}-mac.${ext}"
+			"artifactName": "TakeatStudio-${version}-mac-${arch}.${ext}"
 		},
 		"nsis": {
 			"oneClick": false,
