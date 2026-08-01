@@ -225,7 +225,7 @@ function LaunchWindowContent() {
 			<Button
 				variant="outline"
 				size="lg"
-				title="Voltar ao Takeat Studio"
+				title="Voltar ao Takeat Studio · se a barra travar: Alt+Shift+H destrava, Alt+Shift+Q fecha o app"
 				className={`${styles.electronNoDrag} gap-1.5 px-3 rounded-[11px] font-medium text-[12px] shrink-0 border-[var(--launch-border)] bg-[var(--launch-surface)] text-[var(--launch-text)] hover:border-[var(--launch-border-strong)] hover:bg-[var(--launch-hover)] transition-all`}
 				onClick={() =>
 					(window as unknown as { electronAPI?: { openTakeatStudio?: () => void } }).electronAPI?.openTakeatStudio?.()

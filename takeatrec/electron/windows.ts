@@ -657,6 +657,39 @@ export function reassertHudOverlayMousePassthrough(): void {
 	}, 50);
 }
 
+// Saída de emergência: força a barra a aceitar clique de novo.
+// O encaminhamento de mouse do Windows (setIgnoreMouseEvents com forward)
+// às vezes para de funcionar — notificação do sistema, troca de sessão,
+// mudança de monitor — e aí a barra fica visível, no topo e impossível de
+// clicar. Isto reabilita o clique de forma incondicional.
+export function forceHudOverlayInteractive(): boolean {
+	const hud = getHudOverlayWindow();
+	if (!hud || hud.isDestroyed()) {
+		return false;
+	}
+
+	if (hudOverlayMouseReassertTimer) {
+		clearTimeout(hudOverlayMouseReassertTimer);
+		hudOverlayMouseReassertTimer = null;
+	}
+
+	hudOverlayIgnoringMouse = false;
+	hudOverlayFallbackExpanded = true;
+	applyHudOverlayBounds();
+
+	hud.setIgnoreMouseEvents(false);
+	if (!hud.isVisible()) {
+		hud.show();
+	}
+	if (hud.isMinimized()) {
+		hud.restore();
+	}
+	hud.setAlwaysOnTop(true, "screen-saver");
+	hud.moveTop();
+	hud.focus();
+	return true;
+}
+
 export function setHudOverlayRecordingActive(recording: boolean): void {
 	hudOverlayRecordingActive = Boolean(recording);
 	hudOverlayFallbackExpanded = false;

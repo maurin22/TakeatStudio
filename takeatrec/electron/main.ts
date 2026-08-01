@@ -6,6 +6,7 @@ import {
 	BrowserWindow,
 	desktopCapturer,
 	dialog,
+	globalShortcut,
 	ipcMain,
 	Menu,
 	Notification,
@@ -52,6 +53,7 @@ import {
 	createEditorWindow,
 	createHudOverlayWindow,
 	createSourceSelectorWindow,
+	forceHudOverlayInteractive,
 	getHudOverlayWindow,
 	getUpdateToastWindow,
 	hideUpdateToastWindow,
@@ -297,6 +299,10 @@ ipcMain.on("editor-back-to-recording", (event) => {
 		createWindow();
 	});
 	editorWin.close();
+});
+
+app.on("will-quit", () => {
+	globalShortcut.unregisterAll();
 });
 
 // Em modo dev, fechar o Takeat Rec deve derrubar a árvore inteira (vite +
@@ -982,6 +988,29 @@ app.on("second-instance", () => {
 app.whenReady().then(async () => {
 	if (process.platform === "win32") {
 		app.setAppUserModelId("dev.recordly.app");
+	}
+
+	// Atalhos de emergência: funcionam mesmo com a barra travada, porque são
+	// registrados no sistema e não dependem da interface responder.
+	// Alt+Shift+H destrava a barra (volta a aceitar clique e vem pra frente).
+	// Alt+Shift+Q encerra o app inteiro, sem depender de botão nenhum.
+	try {
+		globalShortcut.register("Alt+Shift+H", () => {
+			const ok = forceHudOverlayInteractive();
+			console.log("[atalho] destravar barra:", ok ? "ok" : "barra não encontrada");
+			if (!ok) createWindow();
+		});
+		globalShortcut.register("Alt+Shift+Q", () => {
+			console.log("[atalho] encerrando o Takeat Rec");
+			isForceClosing = true;
+			editorHasUnsavedChanges = false;
+			for (const w of BrowserWindow.getAllWindows()) {
+				if (!w.isDestroyed()) w.destroy();
+			}
+			app.quit();
+		});
+	} catch (err) {
+		console.warn("[atalho] não foi possível registrar os atalhos de emergência:", err);
 	}
 
 	session.defaultSession.setPermissionCheckHandler(

@@ -1,7 +1,7 @@
 {
 	"name": "takeatcam",
 	"productName": "Takeat Studio",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"description": "Espelho da tela com zoom suave ao vivo. Compartilhe a janela do Takeat Cam no Meet/OBS e transmita com zoom nos pontos certos.",
 	"author": "Takeat",
 	"main": "main.js",
