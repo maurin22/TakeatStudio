@@ -8,6 +8,14 @@ const zoomLabel = document.getElementById('zoom-label')
 const boardGrid = document.getElementById('board-grid')
 const welcomeEl = document.getElementById('welcome')
 const rectsEl = document.getElementById('rects')
+const imagesEl = document.getElementById('images')
+const inkSvg = document.getElementById('ink')
+const imgGrip = document.getElementById('img-grip')
+const dropEl = document.getElementById('drop')
+
+const INK_COLORS = ['#ffffff', '#ff5a5a', '#fbbf24', '#34d668', '#8b5cf6']
+let inkColor = localStorage.getItem('takeatmap-ink') || '#ffffff'
+if (!INK_COLORS.includes(inkColor)) inkColor = '#ffffff'
 
 // Cores dos nós (identidade Takeat primeiro)
 const COLORS = [
@@ -42,6 +50,8 @@ function newBoardData(name) {
 		nodes: [{ id: uid(), x: 0, y: 0, text: 'Tema central', color: 0 }],
 		edges: [],
 		rects: [],
+		strokes: [],
+		images: [],
 	}
 }
 
@@ -162,8 +172,12 @@ function openBoardById(id) {
 	if (!b) return
 	board = b
 	if (!Array.isArray(board.rects)) board.rects = []
+	if (!Array.isArray(board.strokes)) board.strokes = []
+	if (!Array.isArray(board.images)) board.images = []
 	selectedId = null
 	selectedRectId = null
+	selectedImageId = null
+	selectedStrokeId = null
 	editingId = null
 	document.body.classList.remove('in-gallery')
 	boardNameEl.value = board.name
@@ -198,6 +212,7 @@ function applyTransform() {
 	viewport.style.backgroundPosition = `${cam.ox}px ${cam.oy}px`
 	zoomLabel.textContent = `${Math.round(cam.s * 100)}%`
 	positionToolbar()
+	positionImgGrip()
 }
 
 const screenToWorld = (px, py) => ({ x: (px - cam.ox) / cam.s, y: (py - cam.oy) / cam.s })
@@ -249,8 +264,167 @@ function renderAll() {
 	if (!board) return
 	for (const n of board.nodes) nodesEl.appendChild(buildNodeEl(n))
 	renderRects()
+	renderImages()
+	renderInk()
 	renderEdges()
 	updateSelection()
+}
+
+// ---------- imagens ----------
+
+function renderImages() {
+	imagesEl.innerHTML = ''
+	if (!board) return
+	for (const im of board.images || []) imagesEl.appendChild(buildImageEl(im))
+	positionImgGrip()
+}
+
+function buildImageEl(im) {
+	const el = document.createElement('img')
+	el.className = 'mimg' + (im.id === selectedImageId ? ' selected' : '')
+	el.dataset.id = im.id
+	el.src = im.src
+	el.style.left = `${im.x}px`
+	el.style.top = `${im.y}px`
+	el.style.width = `${im.w}px`
+	el.draggable = false
+	return el
+}
+
+function positionImgGrip() {
+	const im = (board?.images || []).find((x) => x.id === selectedImageId)
+	const el = im && imagesEl.querySelector(`[data-id="${im.id}"]`)
+	if (!im || !el) {
+		imgGrip.classList.remove('show')
+		return
+	}
+	imgGrip.classList.add('show')
+	imgGrip.style.left = `${(im.x + el.offsetWidth) * cam.s + cam.ox - 8}px`
+	imgGrip.style.top = `${(im.y + el.offsetHeight) * cam.s + cam.oy - 8}px`
+}
+
+// Guarda a imagem em disco (fora do navegador) e devolve o caminho: manter
+// base64 no armazenamento local estouraria o limite com poucas fotos
+async function addImageFromFile(file, worldPt) {
+	if (!board || !file || !file.type.startsWith('image/')) return
+	const buf = new Uint8Array(await file.arrayBuffer())
+	const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '')
+	const src = await window.takeatmap.saveImage(Array.from(buf), ext)
+	if (!src) return
+	const probe = new Image()
+	probe.onload = () => {
+		const maxW = 420
+		const w = Math.min(maxW, probe.naturalWidth)
+		const h = w * (probe.naturalHeight / probe.naturalWidth)
+		const im = {
+			id: uid(),
+			x: Math.round(worldPt.x - w / 2),
+			y: Math.round(worldPt.y - h / 2),
+			w: Math.round(w),
+			src,
+		}
+		board.images.push(im)
+		selectedImageId = im.id
+		selectedId = null
+		selectedRectId = null
+		renderImages()
+		updateSelection()
+		touch()
+	}
+	probe.src = src
+}
+
+// ---------- caneta ----------
+
+// Suavização: primeiro descarta pontos redundantes, depois transforma a
+// sequência em curvas — é o que tira a aparência tremida do traço à mão
+function simplify(points, tol) {
+	if (points.length < 3) return points
+	const sq = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2
+	const segDist = (p, a, b) => {
+		let x = a.x
+		let y = a.y
+		let dx = b.x - x
+		let dy = b.y - y
+		if (dx || dy) {
+			const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy)
+			if (t > 1) {
+				x = b.x
+				y = b.y
+			} else if (t > 0) {
+				x += dx * t
+				y += dy * t
+			}
+		}
+		dx = p.x - x
+		dy = p.y - y
+		return dx * dx + dy * dy
+	}
+	const tol2 = tol * tol
+	const keep = new Array(points.length).fill(false)
+	keep[0] = true
+	keep[points.length - 1] = true
+	const stack = [[0, points.length - 1]]
+	while (stack.length) {
+		const [first, last] = stack.pop()
+		let maxD = 0
+		let idx = 0
+		for (let i = first + 1; i < last; i++) {
+			const d = segDist(points[i], points[first], points[last])
+			if (d > maxD) {
+				idx = i
+				maxD = d
+			}
+		}
+		if (maxD > tol2) {
+			keep[idx] = true
+			stack.push([first, idx], [idx, last])
+		}
+	}
+	const out = points.filter((_, i) => keep[i])
+	return out.length >= 2 ? out : points
+}
+
+function smoothPath(points) {
+	if (points.length < 2) return ''
+	if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`
+	// Catmull-Rom convertido em Bézier cúbica: curva contínua passando
+	// exatamente por cada ponto que sobrou
+	let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`
+	for (let i = 0; i < points.length - 1; i++) {
+		const p0 = points[i - 1] || points[i]
+		const p1 = points[i]
+		const p2 = points[i + 1]
+		const p3 = points[i + 2] || p2
+		const c1x = p1.x + (p2.x - p0.x) / 6
+		const c1y = p1.y + (p2.y - p0.y) / 6
+		const c2x = p2.x - (p3.x - p1.x) / 6
+		const c2y = p2.y - (p3.y - p1.y) / 6
+		d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+	}
+	return d
+}
+
+function renderInk() {
+	inkSvg.innerHTML = ''
+	if (!board) return
+	for (const s of board.strokes || []) {
+		// caminho invisível e grosso por baixo = área de clique generosa
+		const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+		hit.setAttribute('d', s.d)
+		hit.classList.add('hit')
+		hit.dataset.id = s.id
+		inkSvg.appendChild(hit)
+
+		const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+		p.setAttribute('d', s.d)
+		p.setAttribute('stroke', s.color)
+		p.setAttribute('stroke-width', String(s.w || 3))
+		p.dataset.id = s.id
+		if (s.id === selectedStrokeId) p.classList.add('sel')
+		p.style.pointerEvents = 'none'
+		inkSvg.appendChild(p)
+	}
 }
 
 function buildNodeEl(n) {
@@ -624,6 +798,11 @@ let rectDrawState = null
 let rectMoveState = null
 let rectResizeState = null
 let selectedRectId = null
+let selectedImageId = null
+let selectedStrokeId = null
+let imgDragState = null
+let imgResizeState = null
+let penState = null
 let toolMode = 'select'
 let lastTap = { id: null, t: 0 }
 let lastRectTap = { id: null, t: 0 }
@@ -644,6 +823,63 @@ nodesEl.addEventListener('mousemove', (e) => {
 
 viewport.addEventListener('pointerdown', (e) => {
 	if (!board) return
+
+	// caneta: começa um traço em qualquer lugar do fundo
+	if (toolMode === 'pen' && !e.target.closest('#toolbar')) {
+		const vr = viewport.getBoundingClientRect()
+		const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
+		const el = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+		el.setAttribute('stroke', inkColor)
+		el.setAttribute('stroke-width', '3')
+		el.style.pointerEvents = 'none'
+		inkSvg.appendChild(el)
+		penState = { pts: [p], el }
+		viewport.setPointerCapture(e.pointerId)
+		return
+	}
+
+	// alça de redimensionar imagem
+	if (e.target === imgGrip) {
+		const im = board.images.find((x) => x.id === selectedImageId)
+		if (im) {
+			imgResizeState = { id: im.id, startX: e.clientX, ow: im.w }
+			viewport.setPointerCapture(e.pointerId)
+		}
+		return
+	}
+
+	// imagem: seleciona e arrasta
+	const imgEl = e.target.closest('.mimg')
+	if (imgEl) {
+		const im = board.images.find((x) => x.id === imgEl.dataset.id)
+		if (im) {
+			if (editingId) endEdit()
+			selectedImageId = im.id
+			selectedId = null
+			selectedRectId = null
+			selectedStrokeId = null
+			updateSelection()
+			refreshRectSelection()
+			renderImages()
+			imgDragState = { id: im.id, startX: e.clientX, startY: e.clientY, ox: im.x, oy: im.y }
+			viewport.setPointerCapture(e.pointerId)
+		}
+		return
+	}
+
+	// traço da caneta: seleciona pra poder apagar
+	if (e.target.classList && e.target.classList.contains('hit')) {
+		selectedStrokeId = e.target.dataset.id
+		selectedId = null
+		selectedRectId = null
+		selectedImageId = null
+		updateSelection()
+		refreshRectSelection()
+		renderImages()
+		renderInk()
+		return
+	}
+
 	const nodeEl = e.target.closest('.node')
 	if (nodeEl) {
 		const id = nodeEl.dataset.id
@@ -705,6 +941,36 @@ viewport.addEventListener('pointerdown', (e) => {
 })
 
 viewport.addEventListener('pointermove', (e) => {
+	if (penState) {
+		const vr = viewport.getBoundingClientRect()
+		const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
+		const last = penState.pts[penState.pts.length - 1]
+		// ignora micro-movimentos: menos ruído pra suavizar depois
+		if ((p.x - last.x) ** 2 + (p.y - last.y) ** 2 < 4) return
+		penState.pts.push(p)
+		penState.el.setAttribute('d', penState.pts.map((q, i) => `${i ? 'L' : 'M'} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`).join(' '))
+		return
+	}
+	if (imgDragState) {
+		const im = board.images.find((x) => x.id === imgDragState.id)
+		const el = imagesEl.querySelector(`[data-id="${imgDragState.id}"]`)
+		if (!im || !el) return
+		im.x = Math.round(imgDragState.ox + (e.clientX - imgDragState.startX) / cam.s)
+		im.y = Math.round(imgDragState.oy + (e.clientY - imgDragState.startY) / cam.s)
+		el.style.left = `${im.x}px`
+		el.style.top = `${im.y}px`
+		positionImgGrip()
+		return
+	}
+	if (imgResizeState) {
+		const im = board.images.find((x) => x.id === imgResizeState.id)
+		const el = imagesEl.querySelector(`[data-id="${imgResizeState.id}"]`)
+		if (!im || !el) return
+		im.w = Math.min(2000, Math.max(60, Math.round(imgResizeState.ow + (e.clientX - imgResizeState.startX) / cam.s)))
+		el.style.width = `${im.w}px`
+		positionImgGrip()
+		return
+	}
 	if (connectState) {
 		const vr = viewport.getBoundingClientRect()
 		const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
@@ -811,6 +1077,25 @@ viewport.addEventListener('pointermove', (e) => {
 })
 
 viewport.addEventListener('pointerup', (e) => {
+	if (penState) {
+		const { pts, el } = penState
+		penState = null
+		el.remove()
+		if (pts.length >= 2) {
+			// aqui mora a suavização: limpa os pontos e vira curva
+			const d = smoothPath(simplify(pts, 1.6))
+			board.strokes.push({ id: uid(), d, color: inkColor, w: 3 })
+			renderInk()
+			touch()
+		}
+		return
+	}
+	if (imgDragState || imgResizeState) {
+		imgDragState = null
+		imgResizeState = null
+		touch()
+		return
+	}
 	if (connectState) {
 		const from = connectState.from
 		connectState = null
@@ -920,13 +1205,47 @@ addEventListener('keydown', (e) => {
 		}
 		return
 	}
+	// atalhos de ferramenta (só quando não está digitando)
+	const k = e.key.toLowerCase()
+	if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+		if (k === 'v') { setToolMode('select'); return }
+		if (k === 'p') { setToolMode('pen'); return }
+		if (k === 'r') { setToolMode('rect'); return }
+		if (k === 'n') { TOOL_BTNS.node.click(); return }
+		if (k === 'i') { TOOL_BTNS.image.click(); return }
+	}
+
 	if (!selectedId) {
-		if (selectedRectId && (e.key === 'Delete' || e.key === 'Backspace')) {
-			e.preventDefault()
-			deleteRect(selectedRectId)
-		} else if (e.key === 'Escape') {
+		if (e.key === 'Delete' || e.key === 'Backspace') {
+			if (selectedImageId) {
+				e.preventDefault()
+				board.images = board.images.filter((x) => x.id !== selectedImageId)
+				selectedImageId = null
+				renderImages()
+				touch()
+				return
+			}
+			if (selectedStrokeId) {
+				e.preventDefault()
+				board.strokes = board.strokes.filter((x) => x.id !== selectedStrokeId)
+				selectedStrokeId = null
+				renderInk()
+				touch()
+				return
+			}
+			if (selectedRectId) {
+				e.preventDefault()
+				deleteRect(selectedRectId)
+				return
+			}
+		}
+		if (e.key === 'Escape') {
 			selectedRectId = null
+			selectedImageId = null
+			selectedStrokeId = null
 			refreshRectSelection()
+			renderImages()
+			renderInk()
 			setToolMode('select')
 		}
 		return
@@ -960,15 +1279,117 @@ document.getElementById('btn-add').addEventListener('click', () => {
 })
 document.getElementById('btn-fit').addEventListener('click', fitView)
 
-const btnRect = document.getElementById('btn-rect')
+// ---------- barra de ferramentas ----------
+
+const TOOL_BTNS = {
+	select: document.getElementById('tool-select'),
+	node: document.getElementById('tool-node'),
+	pen: document.getElementById('tool-pen'),
+	rect: document.getElementById('tool-rect'),
+	image: document.getElementById('tool-image'),
+}
+const inkColorsEl = document.getElementById('ink-colors')
+
+function renderInkColors() {
+	inkColorsEl.innerHTML = ''
+	for (const c of INK_COLORS) {
+		const b = document.createElement('button')
+		b.style.background = c
+		b.className = c === inkColor ? 'active' : ''
+		b.title = 'Cor da caneta'
+		b.addEventListener('click', () => {
+			inkColor = c
+			localStorage.setItem('takeatmap-ink', c)
+			renderInkColors()
+		})
+		inkColorsEl.appendChild(b)
+	}
+}
+
 function setToolMode(mode) {
 	toolMode = mode
-	btnRect.classList.toggle('active', mode === 'rect')
+	for (const [k, btn] of Object.entries(TOOL_BTNS)) {
+		if (btn) btn.classList.toggle('active', k === mode)
+	}
 	viewport.classList.toggle('rect-mode', mode === 'rect')
+	viewport.classList.toggle('pen-mode', mode === 'pen')
+	inkColorsEl.classList.toggle('show', mode === 'pen')
 }
-btnRect.addEventListener('click', () => {
+
+TOOL_BTNS.select.addEventListener('click', () => setToolMode('select'))
+TOOL_BTNS.pen.addEventListener('click', () => setToolMode(toolMode === 'pen' ? 'select' : 'pen'))
+TOOL_BTNS.rect.addEventListener('click', () => setToolMode(toolMode === 'rect' ? 'select' : 'rect'))
+TOOL_BTNS.node.addEventListener('click', () => {
 	if (!board) return
-	setToolMode(toolMode === 'rect' ? 'select' : 'rect')
+	setToolMode('select')
+	const rect = viewport.getBoundingClientRect()
+	const p = screenToWorld(rect.width / 2, rect.height / 2)
+	const n = addNode(p.x - 60, p.y - 20)
+	if (n) startEdit(n.id, true)
+})
+TOOL_BTNS.image.addEventListener('click', async () => {
+	if (!board) return
+	setToolMode('select')
+	const picked = await window.takeatmap.pickImages()
+	if (!picked || !picked.length) return
+	const rect = viewport.getBoundingClientRect()
+	const center = screenToWorld(rect.width / 2, rect.height / 2)
+	picked.forEach((src, i) => addImageFromSrc(src, { x: center.x + i * 30, y: center.y + i * 30 }))
+})
+
+// Adiciona imagem já salva em disco (caminho vindo do seletor de arquivos)
+function addImageFromSrc(src, worldPt) {
+	const probe = new Image()
+	probe.onload = () => {
+		const w = Math.min(420, probe.naturalWidth)
+		const h = w * (probe.naturalHeight / probe.naturalWidth)
+		const im = { id: uid(), x: Math.round(worldPt.x - w / 2), y: Math.round(worldPt.y - h / 2), w: Math.round(w), src }
+		board.images.push(im)
+		selectedImageId = im.id
+		renderImages()
+		touch()
+	}
+	probe.src = src
+}
+
+// ---------- arrastar arquivo de fora pra dentro ----------
+
+let dragDepth = 0
+addEventListener('dragenter', (e) => {
+	if (!board || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return
+	e.preventDefault()
+	dragDepth++
+	dropEl.classList.add('show')
+})
+addEventListener('dragover', (e) => {
+	if (dropEl.classList.contains('show')) e.preventDefault()
+})
+addEventListener('dragleave', () => {
+	dragDepth = Math.max(0, dragDepth - 1)
+	if (!dragDepth) dropEl.classList.remove('show')
+})
+addEventListener('drop', async (e) => {
+	if (!board || !e.dataTransfer) return
+	e.preventDefault()
+	dragDepth = 0
+	dropEl.classList.remove('show')
+	const vr = viewport.getBoundingClientRect()
+	const base = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
+	const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+	for (let i = 0; i < files.length; i++) {
+		await addImageFromFile(files[i], { x: base.x + i * 30, y: base.y + i * 30 })
+	}
+})
+
+// colar imagem direto do Ctrl+C de qualquer lugar
+addEventListener('paste', async (e) => {
+	if (!board || editingId) return
+	const items = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
+	if (!items.length) return
+	e.preventDefault()
+	const rect = viewport.getBoundingClientRect()
+	const center = screenToWorld(rect.width / 2, rect.height / 2)
+	for (const f of items) await addImageFromFile(f, center)
 })
 document.getElementById('btn-boards').addEventListener('click', showGallery)
 document.getElementById('btn-open').addEventListener('click', async () => {
@@ -1011,5 +1432,7 @@ boardNameEl.addEventListener('input', () => {
 // ---------- boot ----------
 
 buildToolbar()
+renderInkColors()
+setToolMode('select')
 loadBoards()
 showGallery()

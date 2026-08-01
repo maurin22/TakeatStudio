@@ -299,8 +299,106 @@
 			border-bottom: 3px solid rgba(255, 90, 90, 0.8);
 			border-radius: 0 0 10px 0;
 		}
-		#viewport.rect-mode { cursor: crosshair; }
+		#viewport.rect-mode, #viewport.pen-mode { cursor: crosshair; }
 		.tbtn.active { border-color: #ff5a5a; color: #fff; background: rgba(255, 90, 90, 0.12); }
+
+		/* ---------- barra de ferramentas (estilo Figma) ---------- */
+		#toolbar {
+			position: absolute;
+			left: 14px; top: 50%;
+			transform: translateY(-50%);
+			display: flex;
+			flex-direction: column;
+			gap: 4px;
+			padding: 6px;
+			background: rgba(32, 32, 37, 0.96);
+			backdrop-filter: blur(12px);
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 14px;
+			box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+			z-index: 16;
+		}
+		#toolbar .tool {
+			width: 38px; height: 38px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background: transparent;
+			border: none;
+			border-radius: 10px;
+			color: #b9b9c2;
+			cursor: pointer;
+			transition: background 0.14s ease, color 0.14s ease;
+		}
+		#toolbar .tool:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+		#toolbar .tool.active { background: #e11d2e; color: #fff; }
+		#toolbar .tool svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+		#toolbar .tsplit { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 3px 5px; }
+		#ink-colors {
+			display: none;
+			flex-direction: column;
+			gap: 5px;
+			align-items: center;
+			padding-top: 4px;
+			margin-top: 2px;
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+		}
+		#ink-colors.show { display: flex; }
+		#ink-colors button {
+			width: 17px; height: 17px;
+			border-radius: 50%;
+			border: 2px solid rgba(255, 255, 255, 0.25);
+			cursor: pointer;
+			padding: 0;
+			transition: transform 0.1s ease, border-color 0.1s ease;
+		}
+		#ink-colors button:hover { transform: scale(1.15); }
+		#ink-colors button.active { border-color: #fff; transform: scale(1.15); }
+
+		/* ---------- desenho e imagens ---------- */
+		#ink { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
+		#ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+		#ink path.hit { stroke: transparent; stroke-width: 18; cursor: pointer; }
+		#ink path.sel { filter: drop-shadow(0 0 5px #ff5a5a); }
+
+		.mimg {
+			position: absolute;
+			border-radius: 10px;
+			box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+			user-select: none;
+			-webkit-user-drag: none;
+			display: block;
+		}
+		.mimg.selected { outline: 2.5px solid #ff5a5a; outline-offset: 3px; }
+		#img-grip {
+			position: absolute;
+			width: 16px; height: 16px;
+			cursor: nwse-resize;
+			border-right: 3px solid #ff5a5a;
+			border-bottom: 3px solid #ff5a5a;
+			border-radius: 0 0 8px 0;
+			display: none;
+			z-index: 12;
+		}
+		#img-grip.show { display: block; }
+
+		/* alvo de soltar arquivo */
+		#drop {
+			position: absolute;
+			inset: 0;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			background: rgba(225, 29, 46, 0.12);
+			border: 3px dashed #ff5a5a;
+			z-index: 40;
+			pointer-events: none;
+			font-size: 16px;
+			font-weight: 700;
+			color: #fff;
+			text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+		}
+		#drop.show { display: flex; }
 
 		/* ---------- toolbar flutuante do nó ---------- */
 		#node-toolbar {
@@ -407,8 +505,6 @@
 		<span class="logo">Takeat <em>Map</em></span>
 		<input id="board-name" class="canvas-only" value="Meu mapa" spellcheck="false" />
 		<div class="grow"></div>
-		<button class="tbtn primary canvas-only" id="btn-add">+ Nó</button>
-		<button class="tbtn canvas-only" id="btn-rect">&#9645; Retângulo</button>
 		<button class="tbtn canvas-only" id="btn-fit">Centralizar</button>
 		<div class="sep canvas-only"></div>
 		<button class="tbtn canvas-only" id="btn-boards">Meus mapas</button>
@@ -421,16 +517,39 @@
 	<div id="viewport">
 		<div id="world">
 			<div id="rects"></div>
+			<div id="images"></div>
 			<svg id="edges"></svg>
+			<svg id="ink"></svg>
 			<div id="nodes"></div>
 		</div>
+		<div id="img-grip"></div>
+		<div id="toolbar" class="canvas-only">
+			<button class="tool active" id="tool-select" title="Selecionar e mover (V)">
+				<svg viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.8L9 19z"/></svg>
+			</button>
+			<button class="tool" id="tool-node" title="Novo nó (N)">
+				<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2.5"/><path d="M12 10.5v3M10.5 12h3"/></svg>
+			</button>
+			<button class="tool" id="tool-pen" title="Caneta — o traço é suavizado ao soltar (P)">
+				<svg viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5z"/><path d="M14 6l4 4"/></svg>
+			</button>
+			<button class="tool" id="tool-rect" title="Área pra agrupar (R)">
+				<svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5" stroke-dasharray="3.5 3"/></svg>
+			</button>
+			<div class="tsplit"></div>
+			<button class="tool" id="tool-image" title="Imagem — ou arraste um arquivo pra cá (I)">
+				<svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg>
+			</button>
+			<div id="ink-colors"></div>
+		</div>
+		<div id="drop">Solte a imagem pra adicionar ao quadro</div>
 		<div id="node-toolbar"></div>
 		<div id="zoombar">
 			<button id="zoom-out">&minus;</button>
 			<span id="zoom-label" title="Voltar pra 100%">100%</span>
 			<button id="zoom-in">+</button>
 		</div>
-		<div id="hint"><b>Duplo clique</b> novo nó &nbsp; <b>Bolinha</b> arrasta conexão &nbsp; <b>Tab</b> filho &nbsp; <b>Enter</b> irmão &nbsp; <b>Delete</b> apagar</div>
+		<div id="hint"><b>Duplo clique</b> novo nó &nbsp; <b>Bolinha</b> arrasta conexão &nbsp; <b>Tab</b> filho &nbsp; <b>Ctrl+V</b> cola imagem &nbsp; <b>Delete</b> apagar</div>
 		<div id="gallery">
 			<h1>Meus <em>mapas</em></h1>
 			<p class="sub">Crie um mapa novo ou continue de onde parou. Tudo fica salvo automaticamente.</p>

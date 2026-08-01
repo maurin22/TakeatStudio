@@ -514,6 +514,48 @@ if ($procs) {
 		return true
 	})
 
+	// Imagens do Map ficam em arquivo, não no armazenamento do navegador:
+	// em base64 poucas fotos já estourariam o limite e o quadro se perderia
+	function mapImagesDir() {
+		const dir = path.join(app.getPath('userData'), 'takeatmap-images')
+		fs.mkdirSync(dir, { recursive: true })
+		return dir
+	}
+
+	const fileUrl = (p) => 'file:///' + p.replace(/\\/g, '/').replace(/^\/+/, '')
+
+	ipcMain.handle('map-save-image', (_e, bytes, ext) => {
+		try {
+			const safeExt = /^(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(String(ext)) ? ext : 'png'
+			const dest = path.join(mapImagesDir(), `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`)
+			fs.writeFileSync(dest, Buffer.from(bytes))
+			return fileUrl(dest)
+		} catch (err) {
+			console.error('[map] falha ao salvar imagem:', err)
+			return null
+		}
+	})
+
+	ipcMain.handle('map-pick-images', async (e) => {
+		const w = BrowserWindow.fromWebContents(e.sender)
+		const { canceled, filePaths } = await dialog.showOpenDialog(w, {
+			title: 'Adicionar imagens ao quadro',
+			filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+			properties: ['openFile', 'multiSelections'],
+		})
+		if (canceled) return []
+		// copia pra pasta do app pra imagem não sumir se o original mudar de lugar
+		return filePaths.map((src) => {
+			try {
+				const dest = path.join(mapImagesDir(), `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${path.extname(src)}`)
+				fs.copyFileSync(src, dest)
+				return fileUrl(dest)
+			} catch {
+				return fileUrl(src)
+			}
+		})
+	})
+
 	ipcMain.handle('map-open', async (e) => {
 		const w = BrowserWindow.fromWebContents(e.sender)
 		const { canceled, filePaths } = await dialog.showOpenDialog(w, {
