@@ -1270,13 +1270,6 @@ addEventListener('keydown', (e) => {
 
 // ---------- botões ----------
 
-document.getElementById('btn-add').addEventListener('click', () => {
-	if (!board) return
-	const rect = viewport.getBoundingClientRect()
-	const p = screenToWorld(rect.width / 2, rect.height / 2)
-	const n = addNode(p.x - 60, p.y - 20)
-	if (n) startEdit(n.id, true)
-})
 document.getElementById('btn-fit').addEventListener('click', fitView)
 
 // ---------- barra de ferramentas ----------

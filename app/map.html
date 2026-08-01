@@ -71,8 +71,10 @@
 		.tbtn.primary:hover { background: #c81627; }
 		.tbtn.ghost { border-color: transparent; color: #8f8f97; }
 		.tbtn.ghost:hover { color: #fff; border-color: rgba(255, 255, 255, 0.15); }
-		/* na galeria, botões que só fazem sentido com um quadro aberto somem */
-		body.in-gallery .canvas-only { display: none; }
+		/* na galeria, o que só faz sentido com um quadro aberto some.
+		   O !important é necessário porque #toolbar tem seletor de ID,
+		   que vence a especificidade desta regra */
+		body.in-gallery .canvas-only { display: none !important; }
 
 		/* ---------- galeria de mapas ---------- */
 		#gallery {
