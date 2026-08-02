@@ -360,7 +360,8 @@
 		/* ---------- desenho e imagens ---------- */
 		#ink { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
 		#ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-		#ink path.hit { stroke: transparent; stroke-width: 18; cursor: pointer; }
+		#ink path.hit { stroke: transparent; stroke-width: 18; cursor: grab; }
+		#viewport.panning #ink path.hit { cursor: grabbing; }
 		#ink path.sel { filter: drop-shadow(0 0 5px #ff5a5a); }
 
 		.mimg {

@@ -149,6 +149,7 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	let rectResize = null
 	let imgDrag = null
 	let imgResize = null
+	let strokeDrag = null
 	let pen = null
 	let lastTap = { id: null, t: 0 }
 	let lastRectTap = { id: null, t: 0 }
@@ -484,18 +485,28 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 
 	// ---------- traços ----------
 
+	// O traço guarda os pontos originais e um deslocamento (tx, ty); mover
+	// é só mudar o deslocamento, sem recalcular a curva inteira
+	function strokeTransform(s) {
+		return s.tx || s.ty ? `translate(${s.tx || 0} ${s.ty || 0})` : null
+	}
+
 	function renderInk() {
 		inkSvg.innerHTML = ''
 		for (const s of board.strokes) {
+			const t = strokeTransform(s)
 			const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path')
 			hit.setAttribute('d', s.d)
+			if (t) hit.setAttribute('transform', t)
 			hit.classList.add('mp-hit')
 			hit.dataset.id = s.id
 			inkSvg.appendChild(hit)
 			const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
 			p.setAttribute('d', s.d)
+			if (t) p.setAttribute('transform', t)
 			p.setAttribute('stroke', s.color)
 			p.setAttribute('stroke-width', String(s.w || 3))
+			p.dataset.id = s.id
 			if (s.id === selStroke) p.classList.add('sel')
 			p.style.pointerEvents = 'none'
 			inkSvg.appendChild(p)
@@ -666,10 +677,24 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			return
 		}
 
+		// traço da caneta: seleciona e arrasta
 		if (e.target.classList?.contains('mp-hit')) {
-			selStroke = e.target.dataset.id
-			selNode = selRect = selImage = null
-			refreshSelection()
+			const s = board.strokes.find((x) => x.id === e.target.dataset.id)
+			if (s) {
+				if (editing) endEdit()
+				selStroke = s.id
+				selNode = selRect = selImage = null
+				refreshSelection()
+				strokeDrag = {
+					id: s.id,
+					startX: e.clientX,
+					startY: e.clientY,
+					ox: s.tx || 0,
+					oy: s.ty || 0,
+					moved: false,
+				}
+				viewport.setPointerCapture(e.pointerId)
+			}
 			return
 		}
 
@@ -760,6 +785,18 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			im.w = Math.min(2000, Math.max(60, Math.round(imgResize.ow + (e.clientX - imgResize.startX) / cam.s)))
 			el.style.width = `${im.w}px`
 			positionImgGrip()
+			return
+		}
+		if (strokeDrag) {
+			const s = board.strokes.find((x) => x.id === strokeDrag.id)
+			if (!s) return
+			const dx = (e.clientX - strokeDrag.startX) / cam.s
+			const dy = (e.clientY - strokeDrag.startY) / cam.s
+			if (Math.abs(dx) + Math.abs(dy) > 1) strokeDrag.moved = true
+			s.tx = Math.round(strokeDrag.ox + dx)
+			s.ty = Math.round(strokeDrag.oy + dy)
+			const t = `translate(${s.tx} ${s.ty})`
+			for (const p of inkSvg.querySelectorAll(`[data-id="${s.id}"]`)) p.setAttribute('transform', t)
 			return
 		}
 		if (connect) {
@@ -878,6 +915,12 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		if (imgDrag || imgResize) {
 			imgDrag = imgResize = null
 			changed()
+			return
+		}
+		if (strokeDrag) {
+			const moved = strokeDrag.moved
+			strokeDrag = null
+			if (moved) changed()
 			return
 		}
 		if (connect) {

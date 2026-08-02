@@ -178,7 +178,8 @@ input { font-family: inherit; }
 .mp-edges path.sel { stroke: #ff5a5a; }
 .mp-edges path.preview { stroke: #ff5a5a; stroke-dasharray: 7 7; }
 .mp-ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.mp-ink path.mp-hit { stroke: transparent; stroke-width: 18; cursor: pointer; }
+.mp-ink path.mp-hit { stroke: transparent; stroke-width: 18; cursor: grab; }
+.mp-viewport.panning .mp-ink path.mp-hit { cursor: grabbing; }
 .mp-ink path.sel { filter: drop-shadow(0 0 5px #ff5a5a); }
 
 .mp-node {

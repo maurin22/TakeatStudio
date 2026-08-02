@@ -409,15 +409,20 @@ function renderInk() {
 	inkSvg.innerHTML = ''
 	if (!board) return
 	for (const s of board.strokes || []) {
+		// mover o traço é só deslocar (tx, ty), sem recalcular a curva
+		const t = s.tx || s.ty ? `translate(${s.tx || 0} ${s.ty || 0})` : null
+
 		// caminho invisível e grosso por baixo = área de clique generosa
 		const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path')
 		hit.setAttribute('d', s.d)
+		if (t) hit.setAttribute('transform', t)
 		hit.classList.add('hit')
 		hit.dataset.id = s.id
 		inkSvg.appendChild(hit)
 
 		const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
 		p.setAttribute('d', s.d)
+		if (t) p.setAttribute('transform', t)
 		p.setAttribute('stroke', s.color)
 		p.setAttribute('stroke-width', String(s.w || 3))
 		p.dataset.id = s.id
@@ -802,6 +807,7 @@ let selectedImageId = null
 let selectedStrokeId = null
 let imgDragState = null
 let imgResizeState = null
+let strokeDragState = null
 let penState = null
 let toolMode = 'select'
 let lastTap = { id: null, t: 0 }
@@ -867,16 +873,29 @@ viewport.addEventListener('pointerdown', (e) => {
 		return
 	}
 
-	// traço da caneta: seleciona pra poder apagar
+	// traço da caneta: seleciona e arrasta
 	if (e.target.classList && e.target.classList.contains('hit')) {
-		selectedStrokeId = e.target.dataset.id
-		selectedId = null
-		selectedRectId = null
-		selectedImageId = null
-		updateSelection()
-		refreshRectSelection()
-		renderImages()
-		renderInk()
+		const s = (board.strokes || []).find((x) => x.id === e.target.dataset.id)
+		if (s) {
+			if (editingId) endEdit()
+			selectedStrokeId = s.id
+			selectedId = null
+			selectedRectId = null
+			selectedImageId = null
+			updateSelection()
+			refreshRectSelection()
+			renderImages()
+			renderInk()
+			strokeDragState = {
+				id: s.id,
+				startX: e.clientX,
+				startY: e.clientY,
+				ox: s.tx || 0,
+				oy: s.ty || 0,
+				moved: false,
+			}
+			viewport.setPointerCapture(e.pointerId)
+		}
 		return
 	}
 
@@ -969,6 +988,18 @@ viewport.addEventListener('pointermove', (e) => {
 		im.w = Math.min(2000, Math.max(60, Math.round(imgResizeState.ow + (e.clientX - imgResizeState.startX) / cam.s)))
 		el.style.width = `${im.w}px`
 		positionImgGrip()
+		return
+	}
+	if (strokeDragState) {
+		const s = (board.strokes || []).find((x) => x.id === strokeDragState.id)
+		if (!s) return
+		const dx = (e.clientX - strokeDragState.startX) / cam.s
+		const dy = (e.clientY - strokeDragState.startY) / cam.s
+		if (Math.abs(dx) + Math.abs(dy) > 1) strokeDragState.moved = true
+		s.tx = Math.round(strokeDragState.ox + dx)
+		s.ty = Math.round(strokeDragState.oy + dy)
+		const t = `translate(${s.tx} ${s.ty})`
+		for (const p of inkSvg.querySelectorAll(`[data-id="${s.id}"]`)) p.setAttribute('transform', t)
 		return
 	}
 	if (connectState) {
@@ -1094,6 +1125,12 @@ viewport.addEventListener('pointerup', (e) => {
 		imgDragState = null
 		imgResizeState = null
 		touch()
+		return
+	}
+	if (strokeDragState) {
+		const moved = strokeDragState.moved
+		strokeDragState = null
+		if (moved) touch()
 		return
 	}
 	if (connectState) {
