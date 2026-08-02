@@ -1,0 +1,13 @@
+{
+	// Publicação do Takeat Map na Cloudflare.
+	// Só arquivos estáticos: não há código de servidor, o app inteiro roda
+	// no navegador e conversa direto com o Supabase.
+	"name": "takeat-map",
+	"compatibility_date": "2026-08-01",
+	"assets": {
+		"directory": "./dist",
+		// o app tem uma página só: qualquer endereço cai no index.html,
+		// senão recarregar dentro de um quadro daria erro 404
+		"not_found_handling": "single-page-application"
+	}
+}
