@@ -8,3 +8,8 @@ out/
 
 # clone do Recordly original (só referência local, não vai pro repo)
 recordly/
+
+# projeto web
+web/node_modules/
+web/dist/
+web/.env
