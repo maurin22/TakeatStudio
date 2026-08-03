@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 
 export default function Login() {
 	const [email, setEmail] = useState('')
+	const [senha, setSenha] = useState('')
+	const [criando, setCriando] = useState(false)
 	const [status, setStatus] = useState(null)
 	const [busy, setBusy] = useState(false)
 
@@ -19,9 +21,46 @@ export default function Login() {
 		}
 	}
 
-	async function withEmail(e) {
+	// Entrar com senha não envia e-mail nenhum, então não esbarra no limite
+	// de envios do plano gratuito.
+	async function comSenha(e) {
 		e.preventDefault()
-		if (!email.trim()) return
+		if (!email.trim() || !senha) return
+		setBusy(true)
+		setStatus(null)
+
+		const fn = criando ? supabase.auth.signUp : supabase.auth.signInWithPassword
+		const { data, error } = await fn.call(supabase.auth, {
+			email: email.trim(),
+			password: senha,
+		})
+		setBusy(false)
+
+		if (error) {
+			const msg = /invalid login/i.test(error.message)
+				? 'E-mail ou senha não conferem.'
+				: /already registered/i.test(error.message)
+					? 'Essa conta já existe. Desmarca "criar conta" e entra normalmente.'
+					: /at least/i.test(error.message)
+						? 'A senha precisa ter pelo menos 6 caracteres.'
+						: error.message
+			setStatus({ type: 'erro', msg })
+			return
+		}
+		// Com "Confirm email" ligado no Supabase, o cadastro fica pendente
+		if (criando && !data.session) {
+			setStatus({
+				type: 'ok',
+				msg: 'Conta criada! Confirme pelo link no e-mail, ou desligue "Confirm email" no Supabase pra entrar direto.',
+			})
+		}
+	}
+
+	async function porLink() {
+		if (!email.trim()) {
+			setStatus({ type: 'erro', msg: 'Escreve seu e-mail primeiro.' })
+			return
+		}
 		setBusy(true)
 		setStatus(null)
 		const { error } = await supabase.auth.signInWithOtp({
@@ -31,8 +70,13 @@ export default function Login() {
 		setBusy(false)
 		setStatus(
 			error
-				? { type: 'erro', msg: error.message }
-				: { type: 'ok', msg: 'Link enviado! Confere seu e-mail e clica pra entrar.' },
+				? {
+						type: 'erro',
+						msg: /rate limit|too many/i.test(error.message)
+							? 'Limite de e-mails por hora atingido. Use senha ou o Google.'
+							: error.message,
+					}
+				: { type: 'ok', msg: 'Link enviado! Confere seu e-mail.' },
 		)
 	}
 
@@ -61,18 +105,36 @@ export default function Login() {
 					<span>ou</span>
 				</div>
 
-				<form onSubmit={withEmail}>
+				<form onSubmit={comSenha}>
 					<input
 						type="email"
 						placeholder="seu@takeat.app"
 						value={email}
 						onChange={(ev) => setEmail(ev.target.value)}
 						disabled={busy}
+						autoComplete="email"
 					/>
-					<button type="submit" className="btn-primary" disabled={busy || !email.trim()}>
-						{busy ? 'Enviando...' : 'Receber link por e-mail'}
+					<input
+						type="password"
+						placeholder="sua senha"
+						value={senha}
+						onChange={(ev) => setSenha(ev.target.value)}
+						disabled={busy}
+						autoComplete={criando ? 'new-password' : 'current-password'}
+					/>
+					<button type="submit" className="btn-primary" disabled={busy || !email.trim() || !senha}>
+						{busy ? 'Aguarde...' : criando ? 'Criar conta e entrar' : 'Entrar'}
 					</button>
 				</form>
+
+				<div className="login-links">
+					<button type="button" onClick={() => { setCriando(!criando); setStatus(null) }} disabled={busy}>
+						{criando ? 'Já tenho conta' : 'Criar uma conta'}
+					</button>
+					<button type="button" onClick={porLink} disabled={busy}>
+						Entrar por link no e-mail
+					</button>
+				</div>
 
 				{status && <p className={`status ${status.type}`}>{status.msg}</p>}
 			</div>

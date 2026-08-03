@@ -54,9 +54,13 @@ jobs:
 
             | Sistema | Arquivo |
             |---|---|
-            | Windows 10/11 | `TakeatStudio-Setup-*.exe` — Cam + Rec + Map |
-            | Mac com chip Apple (M1/M2/M3/M4) | `*-mac-arm64.dmg` — Cam + Map |
-            | Mac com Intel | `*-mac-x64.dmg` — Cam + Map |
+            | Windows 10/11 | `TakeatStudio-Setup-*.exe` — Cam + Rec |
+            | Mac com chip Apple (M1/M2/M3/M4) | `*-mac-arm64.dmg` — Cam |
+            | Mac com Intel | `*-mac-x64.dmg` — Cam |
+
+            O **Takeat Map** agora é 100% web (colaborativo, com login):
+            https://takeat-map.mauro-takeat.workers.dev — o botão Map do
+            launcher abre direto no navegador.
 
             Na dúvida sobre qual Mac: menu Apple → "Sobre este Mac".
 
@@ -81,6 +85,14 @@ jobs:
         working-directory: takeatrec
         run: npm ci --ignore-scripts
 
+      # O --ignore-scripts acima também pulava o download do ffmpeg.exe
+      # do ffmpeg-static, e o app saía sem ffmpeg: toda gravação morria
+      # com "Failed to store video". O rebuild roda só o script desse
+      # pacote e traz o binário.
+      - name: Baixar o ffmpeg do ffmpeg-static
+        working-directory: takeatrec
+        run: npm rebuild ffmpeg-static
+
       - name: Montar o Takeat Rec
         working-directory: takeatrec
         env:
@@ -91,6 +103,16 @@ jobs:
           npm run normalize:electron-main-cjs
           npm run smoke:electron-main-cjs
           npx electron-builder --win --dir
+
+      # Trava de segurança: sem o ffmpeg dentro do pacote, nem adianta
+      # seguir — é ele que valida e finaliza cada gravação.
+      - name: Conferir o ffmpeg dentro do pacote
+        working-directory: takeatrec
+        shell: pwsh
+        run: |
+          $ffmpeg = "release/win-unpacked/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe"
+          if (-not (Test-Path $ffmpeg)) { throw "ffmpeg.exe nao veio no pacote do Takeat Rec" }
+          & $ffmpeg -version | Select-Object -First 1
 
       - name: Instalar dependências do Studio
         working-directory: app

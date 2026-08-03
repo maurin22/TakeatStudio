@@ -97,7 +97,7 @@ function smoothPath(points) {
  * @param {(ref:string)=>Promise<string|null>} opts.resolveImage
  * @param {(pt:{x:number,y:number})=>void} [opts.onPointerMove] posição do mouse no quadro (presença)
  */
-export function createMapEngine({ container, board, onChange, uploadImage, resolveImage, onPointerMove }) {
+export function createMapEngine({ container, board, onChange, uploadImage, resolveImage, onPointerMove, onPointerLeave, me, onSelect, onAssign, onIA, onMention }) {
 	container.innerHTML = `
 		<div class="mp-viewport">
 			<div class="mp-world">
@@ -150,7 +150,11 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	let imgDrag = null
 	let imgResize = null
 	let strokeDrag = null
+	let embedResize = null
 	let pen = null
+	let marquee = null
+	const selMulti = new Set()
+	let guias = null
 	let lastTap = { id: null, t: 0 }
 	let lastRectTap = { id: null, t: 0 }
 	let destroyed = false
@@ -158,6 +162,69 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	const getNode = (id) => board.nodes.find((n) => n.id === id)
 	const getRect = (id) => board.rects.find((r) => r.id === id)
 	const getImage = (id) => board.images.find((i) => i.id === id)
+
+	// Conexões ligam cards E imagens, então o endpoint é resolvido nos dois
+	function anchorOf(id) {
+		const n = getNode(id)
+		if (n) {
+			const el = nodeEls.get(id)
+			return el ? { x: n.x, y: n.y, w: el.offsetWidth, h: el.offsetHeight } : null
+		}
+		const im = getImage(id)
+		if (im) {
+			const el = imagesEl.querySelector(`[data-id="${id}"]`)
+			return el ? { x: im.x, y: im.y, w: el.offsetWidth, h: el.offsetHeight } : null
+		}
+		return null
+	}
+
+	// ---------- histórico (desfazer) ----------
+	// Guarda fotografias do quadro. Simples e confiável: o quadro é leve
+	// (texto e coordenadas), então copiar inteiro sai barato.
+	const historico = []
+	const refazer = []
+	const LIMITE = 60
+	let restaurando = false
+
+	const foto = () => JSON.stringify({ nodes: board.nodes, edges: board.edges, rects: board.rects, strokes: board.strokes, images: board.images })
+
+	function marcar() {
+		if (restaurando) return
+		historico.push(foto())
+		if (historico.length > LIMITE) historico.shift()
+		refazer.length = 0
+	}
+
+	function aplicarFoto(json) {
+		const dados = JSON.parse(json)
+		restaurando = true
+		for (const k of ['nodes', 'edges', 'rects', 'strokes', 'images']) board[k] = dados[k] || []
+		selNode = selRect = selImage = selStroke = null
+		selMulti.clear()
+		nodesEl.innerHTML = ''
+		nodeEls.clear()
+		for (const n of board.nodes) nodesEl.appendChild(buildNodeEl(n))
+		renderRects()
+		renderImages()
+		renderInk()
+		refreshSelection()
+		restaurando = false
+		changed()
+	}
+
+	function desfazer() {
+		if (!historico.length) return false
+		refazer.push(foto())
+		aplicarFoto(historico.pop())
+		return true
+	}
+
+	function refazerUltimo() {
+		if (!refazer.length) return false
+		historico.push(foto())
+		aplicarFoto(refazer.pop())
+		return true
+	}
 
 	let saveTimer = null
 	function changed() {
@@ -223,21 +290,56 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 
 	function buildNodeEl(n) {
 		const el = document.createElement('div')
-		el.className = 'mp-node'
+		el.className = `mp-node kind-${n.kind || 'text'}`
 		el.dataset.id = n.id
 		const color = NODE_COLORS[n.color] || NODE_COLORS[0]
-		el.style.background = color.bg
-		el.style.color = color.fg
+		if (n.kind === 'link' || n.kind === 'code' || n.kind === 'embed') {
+			// esses têm visual próprio, definido no CSS
+			el.style.removeProperty('background')
+		} else {
+			el.style.background = color.bg
+			el.style.color = color.fg
+		}
 		el.style.left = `${n.x}px`
 		el.style.top = `${n.y}px`
 		if (n.w) {
 			el.style.width = `${n.w}px`
 			el.style.maxWidth = 'none'
 		}
+
+		if (n.kind === 'embed') {
+			el.appendChild(buildEmbedBody(n))
+		} else if (n.kind === 'link') {
+			el.appendChild(buildLinkBody(n))
+		} else if (n.kind === 'code') {
+			el.appendChild(buildCodeBody(n))
+		} else if (n.kind === 'task') {
+			el.appendChild(buildTaskBody(n))
+		}
+
 		const txt = document.createElement('div')
 		txt.className = 'mp-txt'
-		txt.textContent = n.text
+		// menções aparecem destacadas (texto puro, montado com segurança)
+		if (/@[\w.-]+/.test(n.text || '')) {
+			for (const parte of (n.text || '').split(/(@[\w.-]+)/g)) {
+				if (parte.startsWith('@')) {
+					const m = document.createElement('b')
+					m.className = 'mp-mencao'
+					m.textContent = parte
+					txt.appendChild(m)
+				} else if (parte) {
+					txt.appendChild(document.createTextNode(parte))
+				}
+			}
+		} else {
+			txt.textContent = n.text
+		}
 		el.appendChild(txt)
+
+		if (n.kind === 'task') {
+			const rod = buildRodape(n)
+			if (rod) el.appendChild(rod)
+		}
 		for (const side of ['l', 'r', 't', 'b']) {
 			const h = document.createElement('div')
 			h.className = `mp-hdl ${side}`
@@ -257,6 +359,287 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		return el
 	}
 
+	// ---------- cards especiais ----------
+
+	function dominioDe(url) {
+		try {
+			return new URL(url).hostname.replace(/^www\./, '')
+		} catch {
+			return url
+		}
+	}
+
+	// Alguns serviços permitem mostrar o conteúdo dentro de outra página.
+	// Quando dá, o card exibe o design/vídeo de verdade; quando não dá
+	// (a maioria dos sites bloqueia), vira o cartão simples com o link.
+	function incorporavel(url) {
+		try {
+			const u = new URL(url)
+			const h = u.hostname.replace(/^www\./, '')
+
+			if (h.endsWith('figma.com')) {
+				// hide-ui tira a moldura do Figma (rodapé, zoom, botões) e
+				// deixa só o desenho; scaling=contain encaixa no espaço.
+				// Endereço novo (Embed Kit 2.0) preserva o node-id do link,
+				// então abre exatamente no frame que a pessoa compartilhou.
+				const alvo = url.replace(/^https?:\/\/(www\.)?figma\.com/i, 'https://embed.figma.com')
+				const sep = alvo.includes('?') ? '&' : '?'
+				return {
+					tipo: 'Figma',
+					src: `${alvo}${sep}embed-host=takeatmap&hide-ui=1&scaling=contain&theme=dark&footer=false`,
+					alt: 0.68,
+				}
+			}
+			if (h === 'youtu.be') {
+				return { tipo: 'YouTube', src: `https://www.youtube.com/embed/${u.pathname.slice(1)}`, alt: 0.5625 }
+			}
+			if (h.endsWith('youtube.com') && u.searchParams.get('v')) {
+				return { tipo: 'YouTube', src: `https://www.youtube.com/embed/${u.searchParams.get('v')}`, alt: 0.5625 }
+			}
+			if (h.endsWith('loom.com')) {
+				const id = u.pathname.split('/').pop()
+				return { tipo: 'Loom', src: `https://www.loom.com/embed/${id}`, alt: 0.5625 }
+			}
+			if (h.endsWith('vimeo.com')) {
+				const id = u.pathname.split('/').filter(Boolean).pop()
+				return { tipo: 'Vimeo', src: `https://player.vimeo.com/video/${id}`, alt: 0.5625 }
+			}
+			if (h === 'docs.google.com' || h === 'drive.google.com') {
+				return { tipo: 'Google', src: url.replace(/\/(edit|view)(\?.*)?$/, '/preview'), alt: 0.72 }
+			}
+			return null
+		} catch {
+			return null
+		}
+	}
+
+	function buildEmbedBody(n) {
+		const emb = incorporavel(n.url)
+		const wrap = document.createElement('div')
+		wrap.className = 'mp-embed'
+
+		const bar = document.createElement('div')
+		bar.className = 'mp-embedbar'
+		const ico = document.createElement('img')
+		ico.className = 'mp-favicon'
+		ico.src = `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(dominioDe(n.url))}`
+		ico.onerror = () => ico.remove()
+		const nome = document.createElement('span')
+		nome.className = 'mp-domain'
+		nome.textContent = emb ? emb.tipo : dominioDe(n.url)
+
+		// Enquanto o escudo está ligado, o card arrasta normalmente; ao
+		// liberar, o mouse passa a controlar o conteúdo de dentro.
+		const interagir = document.createElement('button')
+		interagir.className = 'mp-open'
+		interagir.textContent = 'interagir'
+		interagir.addEventListener('pointerdown', (e) => e.stopPropagation())
+		interagir.addEventListener('click', (e) => {
+			e.stopPropagation()
+			const solto = wrap.classList.toggle('livre')
+			interagir.textContent = solto ? 'travar' : 'interagir'
+		})
+
+		const abrir = document.createElement('button')
+		abrir.className = 'mp-open'
+		abrir.textContent = '↗'
+		abrir.title = n.url
+		abrir.addEventListener('pointerdown', (e) => e.stopPropagation())
+		abrir.addEventListener('click', (e) => {
+			e.stopPropagation()
+			window.open(n.url, '_blank', 'noopener')
+		})
+		// botão de remover no próprio card: o conteúdo incorporado rouba o
+		// foco do teclado, então Delete pode não chegar até o app
+		const fechar = document.createElement('button')
+		fechar.className = 'mp-open remover'
+		fechar.textContent = '✕'
+		fechar.title = 'Remover card'
+		fechar.addEventListener('pointerdown', (e) => e.stopPropagation())
+		fechar.addEventListener('click', (e) => {
+			e.stopPropagation()
+			deleteNode(n.id)
+		})
+		bar.append(ico, nome, interagir, abrir, fechar)
+
+		const body = document.createElement('div')
+		body.className = 'mp-embedbody'
+		// altura salva pelo usuário; senão, proporção padrão do serviço
+		body.style.height = `${Math.round(n.h || (n.w || 420) * (emb?.alt || 0.62))}px`
+		const frame = document.createElement('iframe')
+		frame.src = emb ? emb.src : n.url
+		frame.loading = 'lazy'
+		frame.allow = 'fullscreen; clipboard-write'
+		frame.referrerPolicy = 'no-referrer'
+		const escudo = document.createElement('div')
+		escudo.className = 'mp-shield'
+		body.append(frame, escudo)
+
+		// alça no canto: ajusta largura E altura, pra casar com o formato
+		// do design (o Figma não informa as medidas do frame)
+		const grip = document.createElement('div')
+		grip.className = 'mp-embedgrip'
+		grip.title = 'Ajustar tamanho e proporção'
+		grip.addEventListener('pointerdown', (e) => {
+			e.stopPropagation()
+			selNode = n.id
+			refreshSelection()
+			embedResize = {
+				id: n.id,
+				startX: e.clientX,
+				startY: e.clientY,
+				ow: n.w || 440,
+				oh: body.offsetHeight,
+			}
+			viewport.setPointerCapture(e.pointerId)
+		})
+
+		wrap.append(bar, body, grip)
+		return wrap
+	}
+
+	function buildLinkBody(n) {
+		const wrap = document.createElement('div')
+		wrap.className = 'mp-link'
+		const ico = document.createElement('img')
+		ico.className = 'mp-favicon'
+		ico.src = `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(dominioDe(n.url))}`
+		ico.onerror = () => ico.remove()
+		const dom = document.createElement('span')
+		dom.className = 'mp-domain'
+		dom.textContent = dominioDe(n.url)
+		const abrir = document.createElement('button')
+		abrir.className = 'mp-open'
+		abrir.textContent = 'abrir ↗'
+		abrir.title = n.url
+		abrir.addEventListener('pointerdown', (e) => e.stopPropagation())
+		abrir.addEventListener('click', (e) => {
+			e.stopPropagation()
+			window.open(n.url, '_blank', 'noopener')
+		})
+		const fechar = document.createElement('button')
+		fechar.className = 'mp-open remover'
+		fechar.textContent = '✕'
+		fechar.title = 'Remover card'
+		fechar.addEventListener('pointerdown', (e) => e.stopPropagation())
+		fechar.addEventListener('click', (e) => {
+			e.stopPropagation()
+			deleteNode(n.id)
+		})
+		wrap.append(ico, dom, abrir, fechar)
+		return wrap
+	}
+
+	// Colorização simples: o suficiente pra código ficar legível no quadro,
+	// sem carregar uma biblioteca inteira de destaque de sintaxe
+	const PALAVRAS = /\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|await|async|try|catch|def|end|do|then|select|insert|update|delete|where|null|true|false)\b/g
+	function pintarCodigo(src) {
+		const esc = src.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
+		return esc
+			.replace(/(\/\/[^\n]*|#[^\n]*|--[^\n]*)/g, '<i class="cmt">$1</i>')
+			.replace(/('[^']*'|"[^"]*"|`[^`]*`)/g, '<i class="str">$1</i>')
+			.replace(PALAVRAS, '<i class="kw">$&</i>')
+			.replace(/\b(\d+(\.\d+)?)\b/g, '<i class="num">$1</i>')
+	}
+
+	function buildCodeBody(n) {
+		const wrap = document.createElement('div')
+		wrap.className = 'mp-code'
+		const bar = document.createElement('div')
+		bar.className = 'mp-codebar'
+		const lang = document.createElement('span')
+		lang.textContent = n.lang || 'código'
+		const copiar = document.createElement('button')
+		copiar.textContent = 'copiar'
+		copiar.addEventListener('pointerdown', (e) => e.stopPropagation())
+		copiar.addEventListener('click', (e) => {
+			e.stopPropagation()
+			navigator.clipboard?.writeText(n.text || '')
+			copiar.textContent = 'copiado!'
+			setTimeout(() => (copiar.textContent = 'copiar'), 1500)
+		})
+		bar.append(lang, copiar)
+		const pre = document.createElement('pre')
+		pre.innerHTML = pintarCodigo(n.text || '')
+		wrap.append(bar, pre)
+		return wrap
+	}
+
+	const STATUS = [
+		{ id: 'todo', txt: 'A fazer', cor: '#8f8f97' },
+		{ id: 'doing', txt: 'Fazendo', cor: '#fbbf24' },
+		{ id: 'done', txt: 'Feito', cor: '#34d668' },
+	]
+
+	const iniciais = (t) =>
+		(t || '?')
+			.split(/[\s.@_-]+/)
+			.filter(Boolean)
+			.slice(0, 2)
+			.map((p) => p[0].toUpperCase())
+			.join('')
+
+	function dataCurta(ts) {
+		if (!ts) return ''
+		const d = new Date(ts)
+		const hoje = new Date()
+		if (d.toDateString() === hoje.toDateString()) return 'hoje'
+		return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+	}
+
+	function buildTaskBody(n) {
+		const wrap = document.createElement('div')
+		wrap.className = 'mp-task'
+
+		const topo = document.createElement('div')
+		topo.className = 'mp-task-topo'
+		const st = STATUS.find((s) => s.id === n.status) || STATUS[0]
+		const pill = document.createElement('button')
+		pill.className = 'mp-status'
+		pill.textContent = st.txt
+		pill.style.background = st.cor
+		pill.title = 'Clique pra mudar o status'
+		pill.addEventListener('pointerdown', (e) => e.stopPropagation())
+		pill.addEventListener('click', (e) => {
+			e.stopPropagation()
+			const i = STATUS.findIndex((s) => s.id === (n.status || 'todo'))
+			n.status = STATUS[(i + 1) % STATUS.length].id
+			const novo = STATUS.find((s) => s.id === n.status)
+			pill.textContent = novo.txt
+			pill.style.background = novo.cor
+			nodeEls.get(n.id)?.classList.toggle('feito', n.status === 'done')
+			changed()
+		})
+		topo.appendChild(pill)
+
+		// responsável: bolinha com as iniciais, clique abre os detalhes
+		const resp = document.createElement('button')
+		resp.className = 'mp-resp' + (n.resp ? '' : ' vazio')
+		resp.textContent = n.resp ? iniciais(n.resp) : '+'
+		resp.title = n.resp ? `Responsável: ${n.resp}` : 'Definir responsável'
+		resp.addEventListener('pointerdown', (e) => e.stopPropagation())
+		resp.addEventListener('click', (e) => {
+			e.stopPropagation()
+			selNode = n.id
+			refreshSelection()
+			onSelect && onSelect(n, true)
+		})
+		topo.appendChild(resp)
+		wrap.appendChild(topo)
+		if (n.status === 'done') setTimeout(() => nodeEls.get(n.id)?.classList.add('feito'), 0)
+		return wrap
+	}
+
+	// rodapé com autoria, em todos os cards
+	function buildRodape(n) {
+		if (!n.por && !n.em) return null
+		const p = document.createElement('div')
+		p.className = 'mp-autoria'
+		p.textContent = `${n.por || 'alguém'} · ${dataCurta(n.em)}`
+		p.title = n.em ? `Criado por ${n.por} em ${new Date(n.em).toLocaleString('pt-BR')}` : ''
+		return p
+	}
+
 	function sidePoint(n, el, side) {
 		const w = el.offsetWidth
 		const h = el.offsetHeight
@@ -266,8 +649,11 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		return { x: n.x + w / 2, y: n.y + h }
 	}
 
+	// Todo card guarda quem criou e quando
+	const autoria = () => ({ por: me?.name || 'alguém', em: Date.now() })
+
 	function addNode(x, y, text, color, parentId) {
-		const n = { id: uid(), x: Math.round(x), y: Math.round(y), text: text || 'Nova ideia', color: color ?? 1 }
+		const n = { id: uid(), x: Math.round(x), y: Math.round(y), text: text || 'Nova ideia', color: color ?? 1, ...autoria() }
 		board.nodes.push(n)
 		nodesEl.appendChild(buildNodeEl(n))
 		if (parentId) board.edges.push({ from: parentId, to: n.id })
@@ -280,6 +666,7 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 
 	function deleteNode(id) {
 		endEdit()
+		marcar()
 		board.nodes = board.nodes.filter((n) => n.id !== id)
 		board.edges = board.edges.filter((e) => e.from !== id && e.to !== id)
 		nodeEls.get(id)?.remove()
@@ -337,9 +724,22 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		if (el && n) {
 			const txt = el.querySelector('.mp-txt')
 			txt.contentEditable = 'false'
+			const antes = n.text
 			n.text = txt.textContent.trim() || 'Ideia'
+			// menções novas no texto viram aviso pra pessoa citada
+			if (n.text !== antes && onMention) {
+				const antigas = new Set((antes || '').match(/@[\w.-]+/g) || [])
+				for (const m of n.text.match(/@[\w.-]+/g) || []) {
+					if (!antigas.has(m)) onMention(m.slice(1), n)
+				}
+			}
 			txt.textContent = n.text
 			el.classList.remove('editing')
+			// código: o texto é o conteúdo, então o bloco colorido é refeito
+			if (n.kind === 'code') {
+				const pre = el.querySelector('.mp-code pre')
+				if (pre) pre.innerHTML = pintarCodigo(n.text)
+			}
 		}
 		editing = null
 		renderEdges()
@@ -393,6 +793,24 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		})
 		el.appendChild(tag)
 
+		// IA da área: analisa tudo que está dentro dela
+		const iaBtn = document.createElement('button')
+		iaBtn.className = 'mp-ria'
+		iaBtn.textContent = '✦'
+		iaBtn.title = 'Analisar esta área com IA'
+		iaBtn.addEventListener('pointerdown', (e) => e.stopPropagation())
+		iaBtn.addEventListener('click', (e) => {
+			e.stopPropagation()
+			const dentro = board.nodes.filter((n) => {
+				const nel = nodeEls.get(n.id)
+				const cx = n.x + (nel ? nel.offsetWidth : 120) / 2
+				const cy = n.y + (nel ? nel.offsetHeight : 40) / 2
+				return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h
+			})
+			onIA && onIA({ tipo: 'area', alvo: r, cards: dentro })
+		})
+		el.appendChild(iaBtn)
+
 		const grip = document.createElement('div')
 		grip.className = 'mp-rgrip'
 		grip.addEventListener('pointerdown', (e) => {
@@ -437,16 +855,37 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	async function renderImages() {
 		imagesEl.innerHTML = ''
 		for (const im of board.images) {
-			const el = document.createElement('img')
-			el.className = 'mp-img' + (im.id === selImage ? ' selected' : '')
-			el.dataset.id = im.id
-			el.style.left = `${im.x}px`
-			el.style.top = `${im.y}px`
-			el.style.width = `${im.w}px`
-			el.draggable = false
-			imagesEl.appendChild(el)
+			// a imagem vive dentro de um invólucro pra poder receber as
+			// bolinhas de conexão (uma tag <img> não aceita filhos)
+			const wrap = document.createElement('div')
+			wrap.className = 'mp-img' + (im.id === selImage ? ' selected' : '')
+			wrap.dataset.id = im.id
+			wrap.style.left = `${im.x}px`
+			wrap.style.top = `${im.y}px`
+			wrap.style.width = `${im.w}px`
+
+			const img = document.createElement('img')
+			img.draggable = false
+			wrap.appendChild(img)
+
+			for (const side of ['l', 'r', 't', 'b']) {
+				const h = document.createElement('div')
+				h.className = `mp-hdl ${side}`
+				h.title = 'Arraste até um card pra ligar'
+				h.addEventListener('pointerdown', (e) => {
+					e.stopPropagation()
+					selImage = im.id
+					selNode = selRect = selStroke = null
+					refreshSelection()
+					connect = { from: im.id, side }
+					viewport.setPointerCapture(e.pointerId)
+				})
+				wrap.appendChild(h)
+			}
+
+			imagesEl.appendChild(wrap)
 			const src = await resolveImage(im.ref)
-			if (src) el.src = src
+			if (src) img.src = src
 		}
 		positionImgGrip()
 	}
@@ -518,15 +957,13 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	function renderEdges() {
 		edgesSvg.innerHTML = ''
 		for (const e of board.edges) {
-			const a = nodeEls.get(e.from)
-			const b = nodeEls.get(e.to)
-			const na = getNode(e.from)
-			const nb = getNode(e.to)
-			if (!a || !b || !na || !nb) continue
-			const ax = na.x + a.offsetWidth / 2
-			const ay = na.y + a.offsetHeight / 2
-			const bx = nb.x + b.offsetWidth / 2
-			const by = nb.y + b.offsetHeight / 2
+			const na = anchorOf(e.from)
+			const nb = anchorOf(e.to)
+			if (!na || !nb) continue
+			const ax = na.x + na.w / 2
+			const ay = na.y + na.h / 2
+			const bx = nb.x + nb.w / 2
+			const by = nb.y + nb.h / 2
 			const dx = Math.max(40, Math.abs(bx - ax) * 0.45)
 			const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
 			path.setAttribute('d', `M ${ax} ${ay} C ${ax + (bx >= ax ? dx : -dx)} ${ay}, ${bx + (bx >= ax ? -dx : dx)} ${by}, ${bx} ${by}`)
@@ -538,7 +975,10 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	// ---------- seleção e barra do nó ----------
 
 	function refreshSelection() {
-		for (const [id, el] of nodeEls) el.classList.toggle('selected', id === selNode)
+		for (const [id, el] of nodeEls) {
+			el.classList.toggle('selected', id === selNode)
+			el.classList.toggle('multi', selMulti.has(id))
+		}
 		for (const el of rectsEl.children) el.classList.toggle('selected', el.dataset.id === selRect)
 		for (const el of imagesEl.children) el.classList.toggle('selected', el.dataset.id === selImage)
 		renderEdges()
@@ -582,6 +1022,28 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		sep2.className = 'mp-tsep'
 		nodeBar.appendChild(sep2)
 
+		const ia = document.createElement('button')
+		ia.className = 'mp-ia'
+		ia.title = 'Analisar com IA'
+		ia.textContent = '✦'
+		ia.addEventListener('pointerdown', (e) => e.stopPropagation())
+		ia.addEventListener('click', () => {
+			const n = getNode(selNode)
+			if (n) onIA && onIA({ tipo: 'card', alvo: n })
+		})
+		nodeBar.appendChild(ia)
+
+		const info = document.createElement('button')
+		info.className = 'mp-del'
+		info.title = 'Detalhes do card'
+		info.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01" stroke-linecap="round"/></svg>'
+		info.addEventListener('pointerdown', (e) => e.stopPropagation())
+		info.addEventListener('click', () => {
+			const n = getNode(selNode)
+			if (n) onSelect && onSelect(n, true)
+		})
+		nodeBar.appendChild(info)
+
 		const del = document.createElement('button')
 		del.className = 'mp-del'
 		del.title = 'Apagar nó (Delete)'
@@ -611,17 +1073,41 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		renderPeers()
 	}
 
+	// Cursores das outras pessoas: mantidos entre quadros (em vez de
+	// recriados) pra que a transição do CSS faça o movimento deslizar em
+	// vez de pular de um ponto ao outro.
+	const peerEls = new Map()
+
 	function renderPeers() {
-		peersEl.innerHTML = ''
+		const vivos = new Set()
 		for (const p of peers) {
 			if (typeof p.x !== 'number' || typeof p.y !== 'number') continue
-			const el = document.createElement('div')
-			el.className = 'mp-peer'
+			vivos.add(p.id)
+			let el = peerEls.get(p.id)
+			if (!el) {
+				el = document.createElement('div')
+				el.className = 'mp-peer'
+				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+				svg.setAttribute('viewBox', '0 0 24 24')
+				const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+				path.setAttribute('d', 'M5 3l14 8-6.5 1.8L9 19z')
+				svg.appendChild(path)
+				const label = document.createElement('span')
+				el.append(svg, label)
+				peersEl.appendChild(el)
+				peerEls.set(p.id, el)
+			}
+			el.querySelector('path').setAttribute('fill', p.color)
+			const label = el.querySelector('span')
+			if (label.textContent !== p.name) label.textContent = p.name
+			label.style.background = p.color
 			el.style.transform = `translate(${p.x * cam.s + cam.ox}px, ${p.y * cam.s + cam.oy}px)`
-			el.innerHTML = `
-				<svg viewBox="0 0 24 24" style="fill:${p.color}"><path d="M5 3l14 8-6.5 1.8L9 19z"/></svg>
-				<span style="background:${p.color}">${p.name}</span>`
-			peersEl.appendChild(el)
+		}
+		for (const [id, el] of peerEls) {
+			if (!vivos.has(id)) {
+				el.remove()
+				peerEls.delete(id)
+			}
 		}
 	}
 
@@ -725,7 +1211,20 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			const edge = edgeAt(nodeEl, e.clientX)
 			const n = getNode(id)
 			if (edge) resize = { id, edge, startX: e.clientX, ow: nodeEl.offsetWidth, ox: n.x }
-			else drag = { id, startX: e.clientX, startY: e.clientY, ox: n.x, oy: n.y, moved: false }
+			else {
+				marcar()
+				drag = { id, startX: e.clientX, startY: e.clientY, ox: n.x, oy: n.y, moved: false }
+				// arrastar um card do grupo move o grupo inteiro
+				if (selMulti.has(id) && selMulti.size > 1) {
+					drag.grupo = [...selMulti]
+						.filter((x) => x !== id)
+						.map((x) => {
+							const o = getNode(x)
+							return o ? { id: x, ox: o.x, oy: o.y } : null
+						})
+						.filter(Boolean)
+				}
+			}
 			viewport.setPointerCapture(e.pointerId)
 			return
 		}
@@ -747,10 +1246,43 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			return
 		}
 
+		// No fundo: arrastar cria seleção (como Figma/Miro). Pra navegar o
+		// quadro: segure espaço, use o botão do meio ou o botão direito.
+		const querPan = e.button === 1 || e.button === 2 || espacoPressionado
+		if (!querPan) {
+			const vr = viewport.getBoundingClientRect()
+			const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
+			const cx = document.createElement('div')
+			cx.className = 'mp-marquee'
+			viewport.appendChild(cx)
+			marquee = { x0: p.x, y0: p.y, el: cx }
+			viewport.setPointerCapture(e.pointerId)
+			return
+		}
+
 		pan = { startX: e.clientX, startY: e.clientY, ox: cam.ox, oy: cam.oy }
 		viewport.classList.add('panning')
 		viewport.setPointerCapture(e.pointerId)
 	})
+
+	// segurar espaço = modo navegar
+	let espacoPressionado = false
+	const onSpaceDown = (e) => {
+		if (e.code === 'Space' && !editing && e.target === document.body) {
+			espacoPressionado = true
+			viewport.classList.add('modo-pan')
+			e.preventDefault()
+		}
+	}
+	const onSpaceUp = (e) => {
+		if (e.code === 'Space') {
+			espacoPressionado = false
+			viewport.classList.remove('modo-pan')
+		}
+	}
+	window.addEventListener('keydown', onSpaceDown)
+	window.addEventListener('keyup', onSpaceUp)
+	viewport.addEventListener('contextmenu', (e) => e.preventDefault())
 
 	viewport.addEventListener('pointermove', (e) => {
 		const vr = viewport.getBoundingClientRect()
@@ -787,6 +1319,20 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			positionImgGrip()
 			return
 		}
+		if (embedResize) {
+			const n = getNode(embedResize.id)
+			const el = nodeEls.get(embedResize.id)
+			if (!n || !el) return
+			n.w = Math.min(1200, Math.max(220, Math.round(embedResize.ow + (e.clientX - embedResize.startX) / cam.s)))
+			n.h = Math.min(1200, Math.max(140, Math.round(embedResize.oh + (e.clientY - embedResize.startY) / cam.s)))
+			el.style.width = `${n.w}px`
+			el.style.maxWidth = 'none'
+			const corpo = el.querySelector('.mp-embedbody')
+			if (corpo) corpo.style.height = `${n.h}px`
+			renderEdges()
+			positionNodeBar()
+			return
+		}
 		if (strokeDrag) {
 			const s = board.strokes.find((x) => x.id === strokeDrag.id)
 			if (!s) return
@@ -801,10 +1347,9 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 		}
 		if (connect) {
 			const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
-			const n = getNode(connect.from)
-			const el = nodeEls.get(connect.from)
-			if (!n || !el) return
-			const a = sidePoint(n, el, connect.side)
+			const box = anchorOf(connect.from)
+			if (!box) return
+			const a = sidePoint({ x: box.x, y: box.y }, { offsetWidth: box.w, offsetHeight: box.h }, connect.side)
 			const dx = Math.max(40, Math.abs(p.x - a.x) * 0.45)
 			if (!previewPath) {
 				previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
@@ -871,6 +1416,9 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			n.w = w
 			el.style.width = `${w}px`
 			el.style.maxWidth = 'none'
+			// conteúdo incorporado acompanha a largura, mantendo a proporção
+			const corpo = el.querySelector('.mp-embedbody')
+			if (corpo) corpo.style.height = `${Math.round(w * (incorporavel(n.url)?.alt || 0.62))}px`
 			renderEdges()
 			positionNodeBar()
 			return
@@ -887,10 +1435,38 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			n.x = Math.round(drag.ox + dx)
 			n.y = Math.round(drag.oy + dy)
 			const el = nodeEls.get(n.id)
+			encaixar(n, el)
 			el.style.left = `${n.x}px`
 			el.style.top = `${n.y}px`
+			// leva junto os outros selecionados
+			if (drag.grupo) {
+				for (const m of drag.grupo) {
+					const o = getNode(m.id)
+					const oel = nodeEls.get(m.id)
+					if (!o || !oel) continue
+					o.x = Math.round(m.ox + (n.x - drag.ox))
+					o.y = Math.round(m.oy + (n.y - drag.oy))
+					oel.style.left = `${o.x}px`
+					oel.style.top = `${o.y}px`
+				}
+			}
 			renderEdges()
 			positionNodeBar()
+			return
+		}
+		if (marquee) {
+			const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
+			const x = Math.min(marquee.x0, p.x)
+			const y = Math.min(marquee.y0, p.y)
+			const w = Math.abs(p.x - marquee.x0)
+			const h = Math.abs(p.y - marquee.y0)
+			Object.assign(marquee.el.style, {
+				left: `${x * cam.s + cam.ox}px`,
+				top: `${y * cam.s + cam.oy}px`,
+				width: `${w * cam.s}px`,
+				height: `${h * cam.s}px`,
+			})
+			marquee.area = { x, y, w, h }
 			return
 		}
 		if (pan) {
@@ -912,8 +1488,8 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			}
 			return
 		}
-		if (imgDrag || imgResize) {
-			imgDrag = imgResize = null
+		if (imgDrag || imgResize || embedResize) {
+			imgDrag = imgResize = embedResize = null
 			changed()
 			return
 		}
@@ -929,15 +1505,16 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			previewPath?.remove()
 			previewPath = null
 			const target = document.elementFromPoint(e.clientX, e.clientY)
-			const nodeEl = target?.closest?.('.mp-node')
-			if (nodeEl && nodeEl.dataset.id !== from) {
-				const to = nodeEl.dataset.id
+			// pode soltar num card ou numa imagem
+			const alvo = target?.closest?.('.mp-node') || target?.closest?.('.mp-img')
+			if (alvo && alvo.dataset.id !== from) {
+				const to = alvo.dataset.id
 				if (!board.edges.some((ed) => (ed.from === from && ed.to === to) || (ed.from === to && ed.to === from))) {
 					board.edges.push({ from, to })
 					renderEdges()
 					changed()
 				}
-			} else if (!nodeEl) {
+			} else if (!alvo && getNode(from)) {
 				const vr = viewport.getBoundingClientRect()
 				const p = screenToWorld(e.clientX - vr.left, e.clientY - vr.top)
 				const src = getNode(from)
@@ -970,10 +1547,89 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			changed()
 			return
 		}
+		if (marquee) {
+			const area = marquee.area
+			marquee.el.remove()
+			marquee = null
+			selMulti.clear()
+			if (area && area.w > 8 && area.h > 8) {
+				for (const n of board.nodes) {
+					const el = nodeEls.get(n.id)
+					if (!el) continue
+					const dentro =
+						n.x + el.offsetWidth > area.x && n.x < area.x + area.w &&
+						n.y + el.offsetHeight > area.y && n.y < area.y + area.h
+					if (dentro) selMulti.add(n.id)
+				}
+			}
+			selNode = selMulti.size === 1 ? [...selMulti][0] : null
+			refreshSelection()
+			return
+		}
 		if ((drag && drag.moved) || resize) changed()
+		limparGuias()
 		drag = resize = pan = null
 		viewport.classList.remove('panning')
 	})
+
+	// ---------- guias de alinhamento ----------
+
+	function limparGuias() {
+		if (!guias) return
+		guias.remove()
+		guias = null
+	}
+
+	// Compara as bordas e o centro do card arrastado com os outros; quando
+	// fica a menos de 6px, gruda e mostra a linha
+	function encaixar(n, el) {
+		const TOL = 6 / cam.s
+		const largura = el.offsetWidth
+		const altura = el.offsetHeight
+		const meus = { l: n.x, c: n.x + largura / 2, r: n.x + largura, t: n.y, m: n.y + altura / 2, b: n.y + altura }
+		const linhas = []
+
+		for (const o of board.nodes) {
+			if (o.id === n.id || selMulti.has(o.id)) continue
+			const oel = nodeEls.get(o.id)
+			if (!oel) continue
+			const ow = oel.offsetWidth
+			const oh = oel.offsetHeight
+			const outros = { l: o.x, c: o.x + ow / 2, r: o.x + ow, t: o.y, m: o.y + oh / 2, b: o.y + oh }
+
+			for (const [meu, alvo] of [['l', 'l'], ['c', 'c'], ['r', 'r'], ['l', 'r'], ['r', 'l']]) {
+				if (Math.abs(meus[meu] - outros[alvo]) < TOL) {
+					n.x += outros[alvo] - meus[meu]
+					linhas.push({ vertical: true, pos: outros[alvo] })
+					break
+				}
+			}
+			for (const [meu, alvo] of [['t', 't'], ['m', 'm'], ['b', 'b'], ['t', 'b'], ['b', 't']]) {
+				if (Math.abs(meus[meu] - outros[alvo]) < TOL) {
+					n.y += outros[alvo] - meus[meu]
+					linhas.push({ vertical: false, pos: outros[alvo] })
+					break
+				}
+			}
+		}
+
+		limparGuias()
+		if (!linhas.length) return
+		guias = document.createElement('div')
+		guias.className = 'mp-guias'
+		for (const g of linhas.slice(0, 4)) {
+			const linha = document.createElement('i')
+			if (g.vertical) {
+				linha.className = 'v'
+				linha.style.left = `${g.pos * cam.s + cam.ox}px`
+			} else {
+				linha.className = 'h'
+				linha.style.top = `${g.pos * cam.s + cam.oy}px`
+			}
+			guias.appendChild(linha)
+		}
+		viewport.appendChild(guias)
+	}
 
 	viewport.addEventListener('wheel', (e) => {
 		e.preventDefault()
@@ -1022,10 +1678,18 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	const onPaste = async (e) => {
 		if (editing) return
 		const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
-		if (!files.length) return
-		e.preventDefault()
-		const p = screenToWorld(viewport.clientWidth / 2, viewport.clientHeight / 2)
-		for (const f of files) await addImageFile(f, p)
+		if (files.length) {
+			e.preventDefault()
+			const p = screenToWorld(viewport.clientWidth / 2, viewport.clientHeight / 2)
+			for (const f of files) await addImageFile(f, p)
+			return
+		}
+		// colar um endereço vira card de link direto
+		const texto = (e.clipboardData?.getData('text') || '').trim()
+		if (/^(https?:\/\/|www\.)\S+$/i.test(texto)) {
+			e.preventDefault()
+			criarLink(texto)
+		}
 	}
 	window.addEventListener('paste', onPaste)
 
@@ -1048,6 +1712,35 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			return
 		}
 		if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+		// desfazer / refazer
+		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+			e.preventDefault()
+			if (e.shiftKey) refazerUltimo()
+			else desfazer()
+			return
+		}
+		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+			e.preventDefault()
+			refazerUltimo()
+			return
+		}
+		// apagar tudo que está selecionado
+		if ((e.key === 'Delete' || e.key === 'Backspace') && selMulti.size > 1) {
+			e.preventDefault()
+			marcar()
+			for (const id of selMulti) {
+				board.nodes = board.nodes.filter((n) => n.id !== id)
+				board.edges = board.edges.filter((x) => x.from !== id && x.to !== id)
+				nodeEls.get(id)?.remove()
+				nodeEls.delete(id)
+			}
+			selMulti.clear()
+			selNode = null
+			refreshSelection()
+			changed()
+			return
+		}
 
 		const k = e.key.toLowerCase()
 		if (!e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -1110,6 +1803,10 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	const onResize = () => applyTransform()
 	window.addEventListener('resize', onResize)
 
+	// mouse saiu do quadro: avisa pra sumir meu cursor na tela dos outros
+	const onLeave = () => onPointerLeave && onPointerLeave()
+	viewport.addEventListener('pointerleave', onLeave)
+
 	function setTool(t) {
 		tool = t
 		viewport.classList.toggle('rect-mode', t === 'rect')
@@ -1127,9 +1824,136 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 	refreshSelection()
 	requestAnimationFrame(fitView)
 
+	// ---------- criação dos cards especiais ----------
+
+	function centroDaTela() {
+		return screenToWorld(viewport.clientWidth / 2, viewport.clientHeight / 2)
+	}
+
+	function criarCard(extra, texto, largura) {
+		const p = centroDaTela()
+		const n = {
+			id: uid(),
+			x: Math.round(p.x - (largura || 130) / 2),
+			y: Math.round(p.y - 30),
+			text: texto,
+			color: 1,
+			...autoria(),
+			...extra,
+		}
+		if (largura) n.w = largura
+		board.nodes.push(n)
+		nodesEl.appendChild(buildNodeEl(n))
+		selNode = n.id
+		selRect = selImage = selStroke = null
+		refreshSelection()
+		changed()
+		return n
+	}
+
+	// Endereço que dá pra mostrar por dentro vira card grande com o
+	// conteúdo; o resto vira o cartão compacto com o link.
+	function criarLink(url) {
+		const limpa = /^https?:\/\//i.test(url) ? url : `https://${url}`
+		const emb = incorporavel(limpa)
+		if (emb) return criarCard({ kind: 'embed', url: limpa, color: 1 }, emb.tipo, 440)
+		return criarCard({ kind: 'link', url: limpa, color: 1 }, dominioDe(limpa), 230)
+	}
+
+	// ---------- modo apresentação ----------
+
+	// Cada área vira um slide; a câmera voa de uma pra outra
+	let slide = -1
+	// A ordem dos slides é escolhida pela pessoa (campo "ordem"); quem
+	// ainda não tem posição definida entra depois, de cima pra baixo.
+	function slides() {
+		return [...board.rects].sort((a, b) => {
+			const oa = a.ordem ?? 9999
+			const ob = b.ordem ?? 9999
+			return oa - ob || a.y - b.y || a.x - b.x
+		})
+	}
+
+	function voarPara(alvo, dur = 620) {
+		const vw = viewport.clientWidth
+		const vh = viewport.clientHeight
+		const pad = 70
+		const destinoS = Math.min(1.6, Math.max(0.15, Math.min(vw / (alvo.w + pad * 2), vh / (alvo.h + pad * 2))))
+		const destinoX = (vw - (alvo.x * 2 + alvo.w) * destinoS) / 2
+		const destinoY = (vh - (alvo.y * 2 + alvo.h) * destinoS) / 2
+		const de = { s: cam.s, ox: cam.ox, oy: cam.oy }
+		const t0 = performance.now()
+		function passo(t) {
+			const k = Math.min(1, (t - t0) / dur)
+			// desacelera no fim, dá sensação de câmera de cinema
+			const e = 1 - (1 - k) ** 3
+			cam.s = de.s + (destinoS - de.s) * e
+			cam.ox = de.ox + (destinoX - de.ox) * e
+			cam.oy = de.oy + (destinoY - de.oy) * e
+			applyTransform()
+			if (k < 1) requestAnimationFrame(passo)
+		}
+		requestAnimationFrame(passo)
+	}
+
+	function irParaSlide(i) {
+		const lista = slides()
+		if (!lista.length) return null
+		slide = ((i % lista.length) + lista.length) % lista.length
+		voarPara(lista[slide])
+		return { atual: slide + 1, total: lista.length, nome: lista[slide].label || 'Área' }
+	}
+
+	// ---------- busca ----------
+
+	function buscar(termo) {
+		const t = (termo || '').trim().toLowerCase()
+		for (const [id, el] of nodeEls) el.classList.remove('achado')
+		if (!t) return []
+		const achados = board.nodes.filter((n) => (n.text || '').toLowerCase().includes(t))
+		for (const n of achados) nodeEls.get(n.id)?.classList.add('achado')
+		return achados.map((n) => n.id)
+	}
+
+	function focarNo(id) {
+		const n = getNode(id)
+		const el = nodeEls.get(id)
+		if (!n || !el) return
+		voarPara({ x: n.x - 120, y: n.y - 90, w: el.offsetWidth + 240, h: el.offsetHeight + 180 }, 420)
+		selNode = id
+		refreshSelection()
+	}
+
+	// Está mexendo em algo agora? Serve pra não puxar o tapete: uma
+	// atualização que chega de outra pessoa espera você soltar o mouse.
+	function isBusy() {
+		return Boolean(drag || resize || pen || connect || rectDraw || rectMove || rectResize || imgDrag || imgResize || strokeDrag || embedResize || editing)
+	}
+
 	return {
 		setTool,
 		getTool: () => tool,
+		isBusy,
+		/** Substitui o quadro pelo que veio de outra pessoa, preservando a câmera. */
+		applyRemote(next) {
+			if (isBusy()) return false
+			for (const k of ['nodes', 'edges', 'rects', 'strokes', 'images']) {
+				board[k] = Array.isArray(next[k]) ? next[k] : []
+			}
+			if (next.name) board.name = next.name
+			// mantém a seleção só se o elemento ainda existir
+			if (selNode && !getNode(selNode)) selNode = null
+			if (selImage && !getImage(selImage)) selImage = null
+			if (selRect && !getRect(selRect)) selRect = null
+			nodesEl.innerHTML = ''
+			nodeEls.clear()
+			for (const n of board.nodes) nodesEl.appendChild(buildNodeEl(n))
+			renderRects()
+			renderImages()
+			renderInk()
+			refreshSelection()
+			return true
+		},
 		setInkColor: (c) => {
 			inkColor = c
 		},
@@ -1145,6 +1969,101 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			const n = addNode(p.x - 60, p.y - 20)
 			startEdit(n.id, true)
 		},
+		addLink(url) {
+			criarLink(url)
+		},
+		addCode() {
+			const n = criarCard({ kind: 'code', lang: 'código', color: 1 }, 'cole seu código aqui', 320)
+			startEdit(n.id, true)
+		},
+		addTask() {
+			const n = criarCard({ kind: 'task', status: 'todo', color: 1 }, 'Nova tarefa', 200)
+			startEdit(n.id, true)
+		},
+		desfazer,
+		refazer: refazerUltimo,
+		/**
+		 * Vira os passos que a IA sugeriu em cards de verdade, empilhados ao
+		 * lado do que estava sendo analisado e ligados a ele.
+		 */
+		criarCardsDaIA(textos, pedido) {
+			if (!textos?.length) return
+			marcar()
+			const base = pedido?.tipo === 'area' ? pedido.alvo : getNode(pedido?.alvo?.id)
+			const x0 = base ? base.x + (base.w || 220) + 70 : centroDaTela().x
+			const y0 = base ? base.y : centroDaTela().y
+			textos.forEach((t, i) => {
+				const n = {
+					id: uid(),
+					x: Math.round(x0),
+					y: Math.round(y0 + i * 92),
+					text: t,
+					color: 3,
+					w: 240,
+					daIA: true,
+					...autoria(),
+				}
+				board.nodes.push(n)
+				nodesEl.appendChild(buildNodeEl(n))
+				if (pedido?.tipo === 'card' && base) board.edges.push({ from: base.id, to: n.id })
+			})
+			renderEdges()
+			changed()
+		},
+		selecionados: () => selMulti.size,
+		/** Muda a cor de todos os cards selecionados de uma vez. */
+		corDoGrupo(i) {
+			if (!selMulti.size) return
+			marcar()
+			for (const id of selMulti) {
+				const n = getNode(id)
+				if (!n) continue
+				n.color = i
+				const el = nodeEls.get(id)
+				const c = NODE_COLORS[i]
+				if (el && !n.kind) {
+					el.style.background = c.bg
+					el.style.color = c.fg
+				}
+			}
+			changed()
+		},
+		irParaSlide,
+		slidesTotal: () => slides().length,
+		listaDeSlides: () => slides().map((r, i) => ({ id: r.id, nome: r.label || 'Área', pos: i })),
+		moverSlide(id, direcao) {
+			const lista = slides()
+			const i = lista.findIndex((r) => r.id === id)
+			const j = i + direcao
+			if (i < 0 || j < 0 || j >= lista.length) return false
+			const [a] = lista.splice(i, 1)
+			lista.splice(j, 0, a)
+			lista.forEach((r, k) => {
+				const alvo = getRect(r.id)
+				if (alvo) alvo.ordem = k
+			})
+			changed()
+			return true
+		},
+		/** Atualiza campos de um card (usado pelo painel de detalhes). */
+		atualizarCard(id, campos) {
+			const n = getNode(id)
+			if (!n) return null
+			const respAntes = n.resp
+			Object.assign(n, campos)
+			const el = nodeEls.get(id)
+			if (el) {
+				const novo = buildNodeEl(n)
+				el.replaceWith(novo)
+				refreshSelection()
+			}
+			changed()
+			// avisa quem acabou de virar responsável
+			if (campos.resp && campos.resp !== respAntes) onAssign && onAssign(n)
+			return n
+		},
+		buscar,
+		focarNo,
 		async addImages(files) {
 			const p = screenToWorld(viewport.clientWidth / 2, viewport.clientHeight / 2)
 			for (let i = 0; i < files.length; i++) await addImageFile(files[i], { x: p.x + i * 30, y: p.y + i * 30 })
@@ -1166,6 +2085,10 @@ export function createMapEngine({ container, board, onChange, uploadImage, resol
 			window.removeEventListener('dragover', onDragOver)
 			window.removeEventListener('dragleave', onDragLeave)
 			window.removeEventListener('drop', onDrop)
+			window.removeEventListener('keydown', onSpaceDown)
+			window.removeEventListener('keyup', onSpaceUp)
+			viewport.removeEventListener('pointerleave', onLeave)
+			peerEls.clear()
 			container.innerHTML = ''
 		},
 	}

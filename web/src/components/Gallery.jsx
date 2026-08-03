@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { listBoards, createBoard, deleteBoard, importBoard } from '../lib/boards'
 import { NODE_COLORS } from '../engine/mapEngine'
 import { hasCloud } from '../lib/supabase'
+import { TEMPLATES } from '../lib/templates'
+import { listar, marcarTodasLidas, ouvir } from '../lib/notificacoes'
 
 function fmtDate(ts) {
 	if (!ts) return ''
@@ -13,10 +15,12 @@ function fmtDate(ts) {
 	return d.toLocaleDateString('pt-BR')
 }
 
-export default function Gallery({ onOpen, user, onSignOut }) {
+export default function Gallery({ onOpen, user, onSignOut, ehAdmin, onAdmin, onPerfil }) {
 	const [boards, setBoards] = useState([])
 	const [loading, setLoading] = useState(true)
 	const [erro, setErro] = useState(null)
+	const [avisos, setAvisos] = useState([])
+	const [avisosAbertos, setAvisosAbertos] = useState(false)
 
 	async function refresh() {
 		setLoading(true)
@@ -33,8 +37,26 @@ export default function Gallery({ onOpen, user, onSignOut }) {
 		refresh()
 	}, [])
 
-	async function novo() {
-		const id = await createBoard('Meu mapa')
+	// notificações: carrega as existentes e escuta as novas chegando
+	useEffect(() => {
+		if (!user?.email) return
+		listar(user.email).then(setAvisos)
+		return ouvir(user.email, (nova) => setAvisos((l) => [nova, ...l]))
+	}, [user?.email])
+
+	const naoLidas = avisos.filter((a) => !a.lida).length
+
+	async function abrirAvisos() {
+		const novo = !avisosAbertos
+		setAvisosAbertos(novo)
+		if (novo && naoLidas) {
+			await marcarTodasLidas(user.email)
+			setAvisos((l) => l.map((a) => ({ ...a, lida: true })))
+		}
+	}
+
+	async function novo(tpl) {
+		const id = await createBoard(tpl ? tpl.nome : 'Meu mapa', tpl ? tpl.build() : null)
 		onOpen(id)
 	}
 
@@ -72,9 +94,44 @@ export default function Gallery({ onOpen, user, onSignOut }) {
 					Importar
 					<input type="file" accept=".takeatmap,.json" onChange={importar} hidden />
 				</label>
+				{hasCloud && user && (
+					<div className="sino-wrap">
+						<button className="tbtn sino" onClick={abrirAvisos} title="Notificações">
+							🔔{naoLidas > 0 && <i className="badge">{naoLidas}</i>}
+						</button>
+						{avisosAbertos && (
+							<div className="avisos">
+								<strong>Notificações</strong>
+								{avisos.length === 0 && <p className="vazio">Nada por aqui ainda.</p>}
+								{avisos.map((a) => (
+									<button
+										key={a.id}
+										className={'aviso' + (a.lida ? '' : ' nova')}
+										onClick={() => a.board_id && onOpen(a.board_id)}
+									>
+										<span>
+											<b>{a.de || 'alguém'}</b> {a.texto}
+										</span>
+										<em>
+											{a.board_nome ? `${a.board_nome} · ` : ''}
+											{new Date(a.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+										</em>
+									</button>
+								))}
+							</div>
+						)}
+					</div>
+				)}
+				{hasCloud && ehAdmin && (
+					<button className="tbtn" onClick={onAdmin} title="Criar contas pro time">
+						+ Contas
+					</button>
+				)}
 				{user && (
 					<>
-						<span className="who">{user.email}</span>
+						<button className="tbtn ghost" onClick={onPerfil} title="Meu perfil">
+							<span className="who">{user.email}</span>
+						</button>
 						<button className="tbtn ghost" onClick={onSignOut}>
 							Sair
 						</button>
@@ -94,8 +151,21 @@ export default function Gallery({ onOpen, user, onSignOut }) {
 
 				{erro && <p className="status erro">{erro}</p>}
 
+				<h2 className="admin-h2" style={{ marginTop: 0 }}>
+					Comece por um modelo
+				</h2>
+				<div className="tpl-grid">
+					{TEMPLATES.map((t) => (
+						<button key={t.id} className="tpl" onClick={() => novo(t)}>
+							<strong>{t.nome}</strong>
+							<span>{t.desc}</span>
+						</button>
+					))}
+				</div>
+
+				<h2 className="admin-h2">Seus quadros</h2>
 				<div className="board-grid">
-					<button className="bcard new" onClick={novo}>
+					<button className="bcard new" onClick={() => novo(null)}>
 						<span className="plus">+</span>
 						<span>Novo mapa</span>
 					</button>
@@ -104,7 +174,11 @@ export default function Gallery({ onOpen, user, onSignOut }) {
 						? <div className="bcard skeleton" />
 						: boards.map((b) => (
 								<button key={b.id} className="bcard" onClick={() => onOpen(b.id)}>
-									<span className="bname">{b.name || 'Sem nome'}</span>
+									<span className="bname">
+										{b.name || 'Sem nome'}
+										{b.shared && <i className="tag-shared" title="Compartilhado por link">🔗</i>}
+										{b.meu === false && <i className="tag-shared" title="De outra pessoa">👥</i>}
+									</span>
 									<span className="bmeta">
 										{(b.nodes?.length || 0)} {(b.nodes?.length || 0) === 1 ? 'ideia' : 'ideias'} · {fmtDate(b.updatedAt)}
 									</span>

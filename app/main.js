@@ -1,4 +1,7 @@
-const { app, BrowserWindow, session, desktopCapturer, globalShortcut, screen, ipcMain, powerSaveBlocker, dialog } = require('electron')
+const { app, BrowserWindow, session, desktopCapturer, globalShortcut, screen, ipcMain, powerSaveBlocker, shell } = require('electron')
+
+// O Takeat Map agora vive só na web (colaborativo, com login e IA)
+const MAP_URL = 'https://takeat-map.mauro-takeat.workers.dev'
 const { spawn } = require('child_process')
 const path = require('path')
 
@@ -157,7 +160,6 @@ let win
 let overlayWin
 let cursorWin
 let launcherWin
-let mapWin
 let cursorTick = 0
 let cursorHideRequested = false // estilo Recordly ativo e menu fechado
 let cursorReplicaStyle = null
@@ -259,30 +261,6 @@ function createLauncher() {
 	launcherWin.loadFile('launcher.html')
 	launcherWin.on('closed', () => {
 		launcherWin = null
-	})
-}
-
-// Takeat Map: quadro de mapas mentais (canvas infinito estilo Miro)
-function createMapWindow() {
-	if (mapWin && !mapWin.isDestroyed()) {
-		mapWin.show()
-		mapWin.focus()
-		return
-	}
-	mapWin = new BrowserWindow({
-		width: 1280,
-		height: 800,
-		backgroundColor: '#0d0d0f',
-		title: 'Takeat Map',
-		icon: path.join(__dirname, 'assets', 'takeat-icon.png'),
-		webPreferences: {
-			preload: path.join(__dirname, 'map-preload.js'),
-		},
-	})
-	mapWin.setMenuBarVisibility(false)
-	mapWin.loadFile('map.html')
-	mapWin.on('closed', () => {
-		mapWin = null
 	})
 }
 
@@ -476,9 +454,7 @@ if ($procs) {
 			return
 		}
 		if (choice === 'map') {
-			createMapWindow()
-			if (launcherWin && !launcherWin.isDestroyed()) launcherWin.close()
-			launcherWin = null
+			shell.openExternal(MAP_URL)
 			return
 		}
 		createWindow()
@@ -488,7 +464,7 @@ if ($procs) {
 		launcherWin = null
 	})
 
-	// Botão "Trocar de app" (Cam ou Map): fecha a janela e volta ao launcher
+	// Botão "Trocar de app" (Cam): fecha a janela e volta ao launcher
 	ipcMain.on('back-to-launcher', (event) => {
 		cursorHideRequested = false
 		applyCursorHidden(false)
@@ -496,79 +472,6 @@ if ($procs) {
 		const sender = BrowserWindow.fromWebContents(event.sender)
 		if (sender && !sender.isDestroyed()) sender.close()
 		if (sender === win) win = null
-		if (sender === mapWin) mapWin = null
-	})
-
-	// ---------- Takeat Map: salvar/abrir arquivos .takeatmap ----------
-
-	ipcMain.handle('map-save', async (e, data, name) => {
-		const w = BrowserWindow.fromWebContents(e.sender)
-		const safeName = String(name || 'mapa').replace(/[\\/:*?"<>|]/g, '').trim() || 'mapa'
-		const { canceled, filePath } = await dialog.showSaveDialog(w, {
-			title: 'Salvar mapa',
-			defaultPath: `${safeName}.takeatmap`,
-			filters: [{ name: 'Takeat Map', extensions: ['takeatmap'] }],
-		})
-		if (canceled || !filePath) return false
-		fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'))
-		return true
-	})
-
-	// Imagens do Map ficam em arquivo, não no armazenamento do navegador:
-	// em base64 poucas fotos já estourariam o limite e o quadro se perderia
-	function mapImagesDir() {
-		const dir = path.join(app.getPath('userData'), 'takeatmap-images')
-		fs.mkdirSync(dir, { recursive: true })
-		return dir
-	}
-
-	const fileUrl = (p) => 'file:///' + p.replace(/\\/g, '/').replace(/^\/+/, '')
-
-	ipcMain.handle('map-save-image', (_e, bytes, ext) => {
-		try {
-			const safeExt = /^(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(String(ext)) ? ext : 'png'
-			const dest = path.join(mapImagesDir(), `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`)
-			fs.writeFileSync(dest, Buffer.from(bytes))
-			return fileUrl(dest)
-		} catch (err) {
-			console.error('[map] falha ao salvar imagem:', err)
-			return null
-		}
-	})
-
-	ipcMain.handle('map-pick-images', async (e) => {
-		const w = BrowserWindow.fromWebContents(e.sender)
-		const { canceled, filePaths } = await dialog.showOpenDialog(w, {
-			title: 'Adicionar imagens ao quadro',
-			filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
-			properties: ['openFile', 'multiSelections'],
-		})
-		if (canceled) return []
-		// copia pra pasta do app pra imagem não sumir se o original mudar de lugar
-		return filePaths.map((src) => {
-			try {
-				const dest = path.join(mapImagesDir(), `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${path.extname(src)}`)
-				fs.copyFileSync(src, dest)
-				return fileUrl(dest)
-			} catch {
-				return fileUrl(src)
-			}
-		})
-	})
-
-	ipcMain.handle('map-open', async (e) => {
-		const w = BrowserWindow.fromWebContents(e.sender)
-		const { canceled, filePaths } = await dialog.showOpenDialog(w, {
-			title: 'Abrir mapa',
-			filters: [{ name: 'Takeat Map', extensions: ['takeatmap', 'json'] }],
-			properties: ['openFile'],
-		})
-		if (canceled || !filePaths[0]) return null
-		try {
-			return JSON.parse(fs.readFileSync(filePaths[0], 'utf8'))
-		} catch {
-			return null
-		}
 	})
 
 	// Renderer pergunta se está empacotado (pra esconder o botão de launcher)

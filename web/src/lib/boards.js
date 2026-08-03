@@ -37,9 +37,11 @@ function writeLocal(list) {
 /** Lista resumida pra galeria (sem o conteúdo pesado do quadro). */
 export async function listBoards() {
 	if (hasCloud) {
+		const { data: userData } = await supabase.auth.getUser()
+		const meuId = userData?.user?.id
 		const { data, error } = await supabase
 			.from('boards')
-			.select('id, name, updated_at, data')
+			.select('id, name, updated_at, data, owner, is_shared')
 			.order('updated_at', { ascending: false })
 		if (error) throw error
 		return (data || []).map((b) => ({
@@ -47,6 +49,8 @@ export async function listBoards() {
 			name: b.name,
 			updatedAt: new Date(b.updated_at).getTime(),
 			nodes: b.data?.nodes || [],
+			shared: b.is_shared,
+			meu: b.owner === meuId,
 		}))
 	}
 	return readLocal()
@@ -58,13 +62,36 @@ export async function getBoard(id) {
 	if (hasCloud) {
 		const { data, error } = await supabase.from('boards').select('*').eq('id', id).single()
 		if (error) throw error
-		return { id: data.id, name: data.name, updatedAt: new Date(data.updated_at).getTime(), ...data.data }
+		return {
+			id: data.id,
+			name: data.name,
+			updatedAt: new Date(data.updated_at).getTime(),
+			is_shared: data.is_shared,
+			owner: data.owner,
+			...data.data,
+		}
 	}
 	return readLocal().find((b) => b.id === id) || null
 }
 
-export async function createBoard(name) {
-	const board = emptyBoard(name)
+/** Liga/desliga o link compartilhado do quadro. */
+export async function setBoardShared(id, shared) {
+	if (!hasCloud) return
+	const { error } = await supabase.from('boards').update({ is_shared: shared }).eq('id', id)
+	if (error) throw error
+}
+
+export async function createBoard(name, conteudo) {
+	const board = conteudo ? { name, ...conteudo } : emptyBoard(name)
+
+	// cards vindos de modelo também precisam de autoria
+	let quem = 'alguém'
+	if (hasCloud) {
+		const { data } = await supabase.auth.getUser()
+		quem = data?.user?.email?.split('@')[0] || quem
+	}
+	const agora = Date.now()
+	board.nodes = (board.nodes || []).map((n) => ({ por: quem, em: agora, ...n }))
 	if (hasCloud) {
 		const { data: userData } = await supabase.auth.getUser()
 		const { data, error } = await supabase

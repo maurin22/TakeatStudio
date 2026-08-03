@@ -1,11 +1,14 @@
 {
 	// Publicação do Takeat Map na Cloudflare.
-	// Só arquivos estáticos: não há código de servidor, o app inteiro roda
-	// no navegador e conversa direto com o Supabase.
+	// O site é estático, mas há um endereço /api/ia que fala com a IA:
+	// a chave fica guardada como segredo no servidor, nunca no navegador.
+	//   npx wrangler secret put ANTHROPIC_API_KEY
 	"name": "takeat-map",
 	"compatibility_date": "2026-08-01",
+	"main": "worker.js",
 	"assets": {
 		"directory": "./dist",
+		"binding": "ASSETS",
 		// o app tem uma página só: qualquer endereço cai no index.html,
 		// senão recarregar dentro de um quadro daria erro 404
 		"not_found_handling": "single-page-application"
