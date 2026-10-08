@@ -179,6 +179,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	hudOverlayDrag: (phase: "start" | "move" | "end", screenX: number, screenY: number) => {
 		ipcRenderer.send("hud-overlay-drag", phase, screenX, screenY);
 	},
+	hudOverlayFitRecording: (size: { width: number; height: number }) => {
+		ipcRenderer.send("hud-overlay-fit-recording", size);
+	},
 	hudOverlayHide: () => {
 		ipcRenderer.send("hud-overlay-hide");
 	},

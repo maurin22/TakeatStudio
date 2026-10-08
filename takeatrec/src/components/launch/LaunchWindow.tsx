@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { HudInteractionContext } from "./contexts/HudInteractionContext";
 import { canToggleFloatingWebcamPreview } from "./floatingWebcamPreview";
 import { useHudBarDrag } from "./hooks/useHudBarDrag";
+import { useRecordingHudFit } from "./hooks/useRecordingHudFit";
 import { useLaunchHudInteractionState } from "./hooks/useLaunchHudInteractionState";
 import { useLaunchWindowActions } from "./hooks/useLaunchWindowActions";
 import { useLaunchWindowSystemState } from "./hooks/useLaunchWindowSystemState";
@@ -156,6 +157,10 @@ function LaunchWindowContent() {
 		window.electronAPI?.hudOverlaySetWebcamPreviewVisible?.(showRecordingWebcamPreview);
 	}, [showRecordingWebcamPreview]);
 
+	// Gravando (fora do Linux), a janela do HUD fica do tamanho da barra e o arraste move a
+	// janela inteira: a barra não trava num retângulo fixo e a tela em volta continua clicável
+	const recordingHudFitsWindow = recording && platform !== "linux";
+
 	useEffect(() => {
 		return () => {
 			window.electronAPI?.hudOverlaySetWebcamPreviewVisible?.(false);
@@ -174,6 +179,14 @@ function LaunchWindowContent() {
 		hudContentRef,
 		hudBarRef,
 		recordingWebcamPreviewContainerRef,
+		moveWindow: recordingHudFitsWindow,
+	});
+
+	useRecordingHudFit({
+		active: recordingHudFitsWindow,
+		hudBarRef,
+		webcamRef: recordingWebcamPreviewContainerRef,
+		webcamVisible: showRecordingWebcamPreview,
 	});
 
 	const { handleHudMouseEnter, handleHudMouseLeave, beginInteractiveHudAction } =

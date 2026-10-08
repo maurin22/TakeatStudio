@@ -15,15 +15,39 @@ export function useHudBarDrag({
 	hudContentRef,
 	hudBarRef,
 	recordingWebcamPreviewContainerRef,
+	moveWindow = false,
 }: {
 	hudContentRef: RefObject<HTMLDivElement>;
 	hudBarRef: RefObject<HTMLDivElement>;
 	recordingWebcamPreviewContainerRef: RefObject<HTMLDivElement>;
+	/**
+	 * Gravando (fora do Linux) a janela do HUD tem o tamanho da barra: arrastar move a janela
+	 * inteira pela tela (hud-overlay-drag) em vez de deslocar a barra dentro dela. Antes a barra
+	 * só andava dentro da janelinha de 860x160 e travava.
+	 */
+	moveWindow?: boolean;
 }) {
 	const [recordingHudOffset, setRecordingHudOffset] = useState(DEFAULT_RECORDING_HUD_OFFSET);
 	const [isHudDragging, setIsHudDragging] = useState(false);
 	const hudBarTransformRef = useRef<HTMLDivElement | null>(null);
 	const recordingHudOffsetRef = useRef(DEFAULT_RECORDING_HUD_OFFSET);
+	const moveWindowRef = useRef(moveWindow);
+	moveWindowRef.current = moveWindow;
+	const windowDragPointerRef = useRef<number | null>(null);
+	const windowDragPendingRef = useRef<{ screenX: number; screenY: number } | null>(null);
+	const windowDragRafRef = useRef<number | null>(null);
+
+	// a janela de gravação se ajusta à barra centralizada: o deslocamento de antes da gravação sai
+	useEffect(() => {
+		if (!moveWindow) {
+			return;
+		}
+		recordingHudOffsetRef.current = DEFAULT_RECORDING_HUD_OFFSET;
+		if (hudBarTransformRef.current) {
+			hudBarTransformRef.current.style.transform = "translate3d(0px, 0px, 0)";
+		}
+		setRecordingHudOffset(DEFAULT_RECORDING_HUD_OFFSET);
+	}, [moveWindow]);
 	const hudDragStartRef = useRef<
 		| {
 				pointerId: number;
@@ -100,6 +124,12 @@ export function useHudBarDrag({
 		isHudDraggingRef.current = true;
 		setIsHudDragging(true);
 		window.electronAPI?.hudOverlaySetIgnoreMouse?.(false);
+		if (moveWindowRef.current) {
+			// a janela anda junto com o cursor (coordenadas de tela, em DIP como as bordas da janela)
+			windowDragPointerRef.current = event.pointerId;
+			window.electronAPI?.hudOverlayDrag?.("start", event.screenX, event.screenY);
+			return;
+		}
 		if (!hudBarRef.current) {
 			return;
 		}
@@ -118,6 +148,20 @@ export function useHudBarDrag({
 	}, [hudBarRef]);
 
 	const handleHudBarPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+		if (windowDragPointerRef.current === event.pointerId) {
+			windowDragPendingRef.current = { screenX: event.screenX, screenY: event.screenY };
+			if (windowDragRafRef.current === null) {
+				windowDragRafRef.current = requestAnimationFrame(() => {
+					windowDragRafRef.current = null;
+					const pending = windowDragPendingRef.current;
+					if (pending && windowDragPointerRef.current !== null) {
+						window.electronAPI?.hudOverlayDrag?.("move", pending.screenX, pending.screenY);
+					}
+				});
+			}
+			return;
+		}
+
 		const dragState = hudDragStartRef.current;
 		if (!dragState || dragState.pointerId !== event.pointerId) {
 			return;
@@ -163,6 +207,23 @@ export function useHudBarDrag({
 	}, []);
 
 	const handleHudBarPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+		if (windowDragPointerRef.current === event.pointerId) {
+			if (windowDragRafRef.current !== null) {
+				cancelAnimationFrame(windowDragRafRef.current);
+				windowDragRafRef.current = null;
+			}
+			window.electronAPI?.hudOverlayDrag?.("end", event.screenX, event.screenY);
+			windowDragPointerRef.current = null;
+			windowDragPendingRef.current = null;
+			isHudDraggingRef.current = false;
+			setIsHudDragging(false);
+			if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+				event.currentTarget.releasePointerCapture(event.pointerId);
+			}
+			// gravando, a janela fica sempre clicável: não há passagem de mouse para restaurar
+			return;
+		}
+
 		const dragState = hudDragStartRef.current;
 		if (!dragState || dragState.pointerId !== event.pointerId) {
 			return;
@@ -228,6 +289,11 @@ export function useHudBarDrag({
 			if (hudDragMoveRafRef.current !== null) {
 				cancelAnimationFrame(hudDragMoveRafRef.current);
 			}
+			if (windowDragRafRef.current !== null) {
+				cancelAnimationFrame(windowDragRafRef.current);
+			}
+			windowDragRafRef.current = null;
+			windowDragPointerRef.current = null;
 			hudDragMoveRafRef.current = null;
 			hudDragPendingPointerRef.current = null;
 			hudDragStartRef.current = null;

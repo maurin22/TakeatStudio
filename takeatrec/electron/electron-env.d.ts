@@ -208,6 +208,8 @@ interface Window {
 		hudOverlaySetIgnoreMouse: (ignore: boolean) => void;
 		hudOverlaySetSourceSelectionActive: (active: boolean) => void;
 		hudOverlayDrag: (phase: "start" | "move" | "end", screenX: number, screenY: number) => void;
+		/** gravando: tamanho que a janela do HUD precisa ter (barra + câmera), em DIP */
+		hudOverlayFitRecording: (size: { width: number; height: number }) => void;
 		hudOverlayHide: () => void;
 		hudOverlayClose: () => void;
 		hudOverlayRendererReady: () => void;

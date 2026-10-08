@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { USER_DATA_PATH } from "./appPaths";
 import {
+	fitHudOverlayToContent,
 	getHudOverlayWindowBounds,
 	resizeHudOverlayFallbackBounds,
 	shouldExpandHudOverlayFallback,
@@ -305,7 +306,12 @@ function setHudOverlayMousePassthrough(ignore: boolean) {
 
 	if (hudOverlayRecordingActive) {
 		hudOverlayFallbackExpanded = false;
-		applyHudOverlayBounds();
+		// Gravando, a janela já está do tamanho da barra e onde a pessoa arrastou: refazer as
+		// bordas aqui (isto roda a cada passada do mouse pela barra) jogava o HUD de volta para
+		// o canto de baixo. No Linux a janela não se ajusta à barra, então lá segue como antes.
+		if (process.platform === "linux") {
+			applyHudOverlayBounds();
+		}
 		hudOverlayWindow.setIgnoreMouseEvents(false);
 		return;
 	}
@@ -427,9 +433,41 @@ ipcMain.on("hud-overlay-set-webcam-preview-visible", (_event, visible: boolean) 
 	}
 
 	hudOverlayWebcamPreviewVisible = nextVisible;
-	if (hudOverlayRecordingActive) {
+	// fora do Linux, a janela de gravação cresce e encolhe junto com a câmera pelo
+	// "hud-overlay-fit-recording", sem sair do lugar para onde a pessoa arrastou
+	if (hudOverlayRecordingActive && process.platform === "linux") {
 		applyHudOverlayBounds();
 	}
+});
+
+// Gravando, a janela do HUD fica do tamanho da barra (e da câmera, se estiver aparecendo).
+// Antes ela era um retângulo fixo de 860x160 em baixo da tela: a barra não saía dele e a
+// parte transparente em volta segurava os cliques de quem estava gravando. O renderer mede
+// o que precisa aparecer e manda o tamanho; a janela continua sempre clicável (sem depender
+// do encaminhamento de mouse do Windows) e o arraste move a janela inteira (hud-overlay-drag).
+ipcMain.on("hud-overlay-fit-recording", (_event, size: { width?: unknown; height?: unknown }) => {
+	if (
+		!hudOverlayWindow ||
+		hudOverlayWindow.isDestroyed() ||
+		!hudOverlayRecordingActive ||
+		process.platform === "linux" ||
+		hudDragOffset
+	) {
+		return;
+	}
+
+	const currentBounds = hudOverlayWindow.getBounds();
+	const { workArea } = getScreen().getDisplayMatching(currentBounds);
+	const nextBounds = fitHudOverlayToContent(currentBounds, workArea, {
+		width: Number(size?.width),
+		height: Number(size?.height),
+	});
+	if (!nextBounds) {
+		return;
+	}
+
+	hudOverlayWindow.setBounds(nextBounds, false);
+	positionUpdateToastWindow();
 });
 
 ipcMain.handle("set-hud-overlay-capture-protection", (_event, enabled: boolean) => {

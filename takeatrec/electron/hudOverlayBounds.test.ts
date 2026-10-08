@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	fitHudOverlayToContent,
 	getHudOverlayWindowBounds,
 	resizeHudOverlayFallbackBounds,
 	shouldExpandHudOverlayFallback,
@@ -184,5 +185,64 @@ describe("shouldExpandHudOverlayFallback", () => {
 				webcamPreviewVisible: true,
 			}),
 		).toBe(false);
+	});
+});
+
+describe("fitHudOverlayToContent", () => {
+	const workArea = {
+		x: 120,
+		y: 40,
+		width: 1920,
+		height: 1040,
+	};
+
+	it("shrinks the recording window to the bar, keeping its bottom-center anchor", () => {
+		expect(
+			fitHudOverlayToContent(
+				{ x: 650, y: 920, width: 860, height: 160 },
+				workArea,
+				{ width: 520, height: 96 },
+			),
+		).toEqual({ x: 820, y: 984, width: 520, height: 96 });
+	});
+
+	it("grows upward from the same bottom edge when the webcam preview appears", () => {
+		expect(
+			fitHudOverlayToContent(
+				{ x: 820, y: 984, width: 520, height: 96 },
+				workArea,
+				{ width: 520, height: 420 },
+			),
+		).toEqual({ x: 820, y: 660, width: 520, height: 420 });
+	});
+
+	it("keeps a window dragged near the edge inside the work area", () => {
+		expect(
+			fitHudOverlayToContent(
+				{ x: 1800, y: 100, width: 300, height: 96 },
+				workArea,
+				{ width: 600, height: 96 },
+			),
+		).toEqual({ x: 1440, y: 100, width: 600, height: 96 });
+	});
+
+	it("does nothing when the size is already right", () => {
+		expect(
+			fitHudOverlayToContent(
+				{ x: 820, y: 984, width: 520, height: 96 },
+				workArea,
+				{ width: 521, height: 97 },
+			),
+		).toBeNull();
+	});
+
+	it("ignores invalid sizes", () => {
+		expect(
+			fitHudOverlayToContent(
+				{ x: 820, y: 984, width: 520, height: 96 },
+				workArea,
+				{ width: Number.NaN, height: 96 },
+			),
+		).toBeNull();
 	});
 });
