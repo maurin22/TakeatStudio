@@ -289,11 +289,7 @@ function setHudOverlayFallbackExpanded(expanded: boolean) {
 
 function setHudOverlayMousePassthrough(ignore: boolean) {
 	hudOverlayIgnoringMouse =
-		hudOverlaySourceSelectionActive && !hudOverlayRecordingActive
-			? true
-			: hudOverlayRecordingActive
-				? false
-				: ignore;
+		hudOverlaySourceSelectionActive && !hudOverlayRecordingActive ? true : ignore;
 
 	if (hudOverlayMouseReassertTimer) {
 		clearTimeout(hudOverlayMouseReassertTimer);
@@ -311,6 +307,17 @@ function setHudOverlayMousePassthrough(ignore: boolean) {
 		// o canto de baixo. No Linux a janela não se ajusta à barra, então lá segue como antes.
 		if (process.platform === "linux") {
 			applyHudOverlayBounds();
+			hudOverlayWindow.setIgnoreMouseEvents(false);
+			return;
+		}
+		// A janela da gravação é o retângulo que envolve a barra e a câmera (espelhado no
+		// centro): quando a câmera fica longe da barra, sobra muita área transparente. Antes
+		// ela era sempre "sólida" e segurava os cliques nessa área. Agora funciona como fora
+		// da gravação: o mouse passa direto (com encaminhamento) e o renderer avisa quando está
+		// em cima da barra ou da câmera para o clique voltar a valer.
+		if (isHudOverlayMousePassthroughSupported()) {
+			hudOverlayWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : undefined);
+			return;
 		}
 		hudOverlayWindow.setIgnoreMouseEvents(false);
 		return;
@@ -541,13 +548,8 @@ export function createHudOverlayWindow(): BrowserWindow {
 	}
 
 	if (isHudOverlayMousePassthroughSupported()) {
-		if (hudOverlayRecordingActive) {
-			hudOverlayIgnoringMouse = false;
-			win.setIgnoreMouseEvents(false);
-		} else {
-			hudOverlayIgnoringMouse = true;
-			win.setIgnoreMouseEvents(true, { forward: true });
-		}
+		hudOverlayIgnoringMouse = true;
+		win.setIgnoreMouseEvents(true, { forward: true });
 	}
 
 	// On Windows 11+, focus changes (e.g. showing a native notification) can break
@@ -676,11 +678,6 @@ export function reassertHudOverlayMousePassthrough(): void {
 		return;
 	}
 
-	if (hudOverlayRecordingActive) {
-		hud.setIgnoreMouseEvents(false);
-		return;
-	}
-
 	// Toggle off then back on so the native WS_EX_TRANSPARENT flag is fully
 	// re-initialised rather than merely re-asserted in a potentially broken state.
 	hud.setIgnoreMouseEvents(false);
@@ -732,7 +729,10 @@ export function setHudOverlayRecordingActive(recording: boolean): void {
 	hudOverlayRecordingActive = Boolean(recording);
 	hudOverlayFallbackExpanded = false;
 	applyHudOverlayBounds();
-	setHudOverlayMousePassthrough(!hudOverlayRecordingActive);
+	// Com encaminhamento de mouse (Windows 11+/Mac) a janela começa deixando o clique passar,
+	// gravando ou não: o renderer liga o clique quando o mouse está na barra ou na câmera.
+	// Sem encaminhamento, gravando ela fica clicável (do tamanho da barra).
+	setHudOverlayMousePassthrough(isHudOverlayMousePassthroughSupported() || !hudOverlayRecordingActive);
 }
 
 export function createUpdateToastWindow(): BrowserWindow {
