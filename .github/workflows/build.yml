@@ -33,7 +33,7 @@ jobs:
         env:
           # sem certificado pago da Apple: o afterPack assina ad-hoc
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac
+        run: npx electron-builder --mac --publish never
 
       - name: Publicar como artefato
         uses: actions/upload-artifact@v7
@@ -58,9 +58,9 @@ jobs:
             | Mac com chip Apple (M1/M2/M3/M4) | `*-mac-arm64.dmg` — Cam |
             | Mac com Intel | `*-mac-x64.dmg` — Cam |
 
-            O **Takeat Map** agora é 100% web (colaborativo, com login):
-            https://takeat-map.mauro-takeat.workers.dev — o botão Map do
-            launcher abre direto no navegador.
+            No Windows, a partir da 0.6.4 o app **se atualiza sozinho**: quando
+            sair versão nova ele baixa em segundo plano e pergunta se pode
+            reiniciar. Quem está numa versão anterior instala esta uma vez à mão.
 
             Na dúvida sobre qual Mac: menu Apple → "Sobre este Mac".
 
@@ -118,9 +118,10 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # --publish never: quem sobe os arquivos pra Release é o passo de baixo.
       - name: Empacotar o instalador do Windows
         working-directory: app
-        run: npx electron-builder --win
+        run: npx electron-builder --win --publish never
 
       - name: Publicar como artefato
         uses: actions/upload-artifact@v7
@@ -133,5 +134,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: app/release/*.exe
+          # latest.yml e .blockmap: o app instalado consulta esses dois pra
+          # se atualizar sozinho, baixando só o que mudou
+          files: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
           fail_on_unmatched_files: true

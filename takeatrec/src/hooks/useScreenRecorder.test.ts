@@ -140,11 +140,11 @@ describe("createBrowserRecordingOptions", () => {
 });
 
 describe("resolveBrowserCaptureCursorPolicy", () => {
-	it("preserves the existing hidden-cursor browser policy by default", () => {
+	it("keeps the cursor out of the video but shows the editor overlay cursor by default", () => {
 		expect(resolveBrowserCaptureCursorPolicy()).toEqual({
 			streamCursor: "never",
 			hideOsCursorBeforeRecording: true,
-			hideEditorOverlayCursorByDefault: true,
+			hideEditorOverlayCursorByDefault: false,
 		});
 	});
 

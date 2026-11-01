@@ -1,7 +1,5 @@
-const { app, BrowserWindow, session, desktopCapturer, globalShortcut, screen, ipcMain, powerSaveBlocker, shell } = require('electron')
+const { app, BrowserWindow, session, desktopCapturer, dialog, globalShortcut, screen, ipcMain, powerSaveBlocker } = require('electron')
 
-// O Takeat Map agora vive só na web (colaborativo, com login e IA)
-const MAP_URL = 'https://takeat-map.mauro-takeat.workers.dev'
 const { spawn } = require('child_process')
 const path = require('path')
 
@@ -183,7 +181,19 @@ function createWindow() {
 	})
 	win.setMenuBarVisibility(false)
 	win.loadFile('index.html')
+	// Janela minimizada para de ser desenhada pelo Windows e o Meet passa a
+	// transmitir um quadro congelado. Como esta janela É a transmissão,
+	// minimizar não pode: restaura na hora, sem roubar o foco de quem
+	// estava apresentando. Pra tirar da frente, é só cobrir com outra janela.
+	win.on('minimize', () => {
+		if (win && !win.isDestroyed()) {
+			win.restore()
+			win.showInactive()
+			win.blur()
+		}
+	})
 	win.on('closed', () => {
+		globalShortcut.unregisterAll()
 		if (overlayWin && !overlayWin.isDestroyed()) overlayWin.close()
 		if (cursorWin && !cursorWin.isDestroyed()) cursorWin.close()
 	})
@@ -325,6 +335,58 @@ function sourcePhysRect() {
 	return toPhysRect(display.bounds)
 }
 
+// Atualização automática pelas Releases do GitHub (maurin22/TakeatStudio).
+// Baixa sozinho em segundo plano, mas só instala quando a pessoa confirma:
+// instalar por conta própria fecharia o Takeat Rec no meio de uma gravação.
+// Só no Windows: no Mac o app não é assinado e o macOS recusa a troca.
+function setupAutoUpdates() {
+	if (!app.isPackaged || !IS_WIN) return
+	let autoUpdater
+	try {
+		;({ autoUpdater } = require('electron-updater'))
+	} catch (err) {
+		tlog('electron-updater indisponível:', err && err.message)
+		return
+	}
+	autoUpdater.autoDownload = true
+	autoUpdater.autoInstallOnAppQuit = false
+	autoUpdater.on('error', (err) => tlog('atualização falhou:', err && err.message))
+
+	let asked = false
+	autoUpdater.on('update-downloaded', async (info) => {
+		if (asked) return
+		asked = true
+		const owner = BrowserWindow.getFocusedWindow() || launcherWin || win || undefined
+		const { response } = await dialog.showMessageBox(owner, {
+			type: 'info',
+			title: 'Atualização do Takeat Studio',
+			message: `A versão ${info.version} do Takeat Studio está pronta.`,
+			detail:
+				'Instalar agora fecha o Takeat Studio e o Takeat Rec. Se estiver gravando, ' +
+				'termine a gravação antes e escolha "Depois". Na próxima vez que abrir o app, ' +
+				'ele pergunta de novo.',
+			buttons: ['Reiniciar e atualizar', 'Depois'],
+			defaultId: 0,
+			cancelId: 1,
+			noLink: true,
+		})
+		if (response !== 0) return
+		// fecha o Rec antes: com ele aberto o instalador não consegue trocar os arquivos dele
+		const stopRec = spawn(
+			'powershell.exe',
+			['-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+				"Get-Process TakeatRec -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
+			{ windowsHide: true },
+		)
+		stopRec.on('close', () => autoUpdater.quitAndInstall(true, true))
+		stopRec.on('error', () => autoUpdater.quitAndInstall(true, true))
+	})
+
+	const check = () => autoUpdater.checkForUpdates().catch((err) => tlog('checagem de atualização falhou:', err && err.message))
+	setTimeout(check, 15_000) // depois de abrir, sem pesar na inicialização
+	setInterval(check, 4 * 60 * 60 * 1000) // e a cada 4h pra quem deixa aberto
+}
+
 app.whenReady().then(() => {
 	session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
 		desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
@@ -346,6 +408,8 @@ app.whenReady().then(() => {
 	})
 
 	powerSaveBlocker.start('prevent-app-suspension')
+
+	setupAutoUpdates()
 
 	// O launcher abre em qualquer modo; no app instalado ele esconde o
 	// Takeat Rec (que só existe no ambiente de desenvolvimento)
@@ -387,31 +451,38 @@ if ($procs) {
 }
 `.trim()
 
+	// Versão leve do teste "o Rec tem janela?" pro polling: sem Add-Type
+	// (que compila C# e pesa na máquina a cada chamada). O comando completo,
+	// que traz a janela à frente, só roda quando ela realmente existe.
+	const REC_CHECK_CMD =
+		`if (Get-Process electron, TakeatRec -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*takeatrec*' -and $_.MainWindowHandle -ne 0 }) { 'found' } else { 'none' }`
+
 	function sendRecState(state) {
 		if (launcherWin && !launcherWin.isDestroyed()) launcherWin.webContents.send('rec-state', state)
 	}
 
 	let recLaunching = false
 
-	function spawnRec() {
-		// Mata fantasmas de instâncias anteriores (processos sem janela,
-		// ou o processo inteiro se estiver travado) antes de subir uma nova
-		const ghostKill =
-			`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*takeatrec*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
-		psRun(ghostKill, () => {
-			if (app.isPackaged) {
-				// Instalado: o Rec vem embutido em resources/takeatrec
-				const recExe = path.join(process.resourcesPath, 'takeatrec', 'TakeatRec.exe')
-				spawn(recExe, [], { detached: true, stdio: 'ignore' }).unref()
-				return
-			}
-			// Dev: sobe o projeto ../takeatrec pelo vite, sem janela de console
-			const recDir = path.join(__dirname, '..', 'takeatrec')
-			psRun(
-				`$env:WHISPER_RUNTIME_ALLOW_MISSING='1'; ` +
-				`Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','npm','run','dev' -WorkingDirectory '${recDir}' -WindowStyle Hidden`
-			)
-		})
+	// Mata instâncias do Rec que existem mas não têm janela nenhuma (travadas).
+	// Só roda como último recurso: matar à força um Rec que ainda estava
+	// abrindo — ou gravando com a janela principal escondida — perdia a gravação.
+	const GHOST_KILL_CMD =
+		`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*takeatrec*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+
+	function startRecProcess() {
+		if (app.isPackaged) {
+			// Instalado: o Rec vem embutido em resources/takeatrec. Se já houver
+			// um aberto, a trava de instância única dele só traz a janela à frente.
+			const recExe = path.join(process.resourcesPath, 'takeatrec', 'TakeatRec.exe')
+			spawn(recExe, [], { detached: true, stdio: 'ignore' }).unref()
+			return
+		}
+		// Dev: sobe o projeto ../takeatrec pelo vite, sem janela de console
+		const recDir = path.join(__dirname, '..', 'takeatrec')
+		psRun(
+			`$env:WHISPER_RUNTIME_ALLOW_MISSING='1'; ` +
+			`Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','npm','run','dev' -WorkingDirectory '${recDir}' -WindowStyle Hidden`
+		)
 	}
 
 	function launchRec() {
@@ -427,34 +498,42 @@ if ($procs) {
 				if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
 				return
 			}
-			// Nenhuma janela real (processo fantasma ou nada rodando):
-			// mata fantasmas e sobe uma instância nova
-			spawnRec()
+			// Nenhuma janela visível: abre o Rec. Se em 30s não aparecer janela,
+			// aí sim assume processo fantasma, mata e tenta uma última vez.
+			startRecProcess()
 			const started = Date.now()
+			let ghostsCleared = false
+			let polling = false
 			const poll = setInterval(() => {
-				psRun(REC_FOCUS_CMD, (result) => {
+				if (polling) return // não empilha PowerShell enquanto um ainda roda
+				polling = true
+				psRun(REC_CHECK_CMD, (result) => {
+					polling = false
+					if (result !== 'found' && !ghostsCleared && Date.now() - started > 30000) {
+						ghostsCleared = true
+						psRun(GHOST_KILL_CMD, () => startRecProcess())
+						return
+					}
 					if (result === 'found') {
 						clearInterval(poll)
-						recLaunching = false
-						sendRecState('ready')
-						if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
+						psRun(REC_FOCUS_CMD, () => {
+							recLaunching = false
+							sendRecState('ready')
+							if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
+						})
 					} else if (Date.now() - started > 90000) {
 						clearInterval(poll)
 						recLaunching = false
 						sendRecState('error')
 					}
 				})
-			}, 2000)
+			}, 2500)
 		})
 	}
 
 	ipcMain.on('launch-choice', (_e, choice) => {
 		if (choice === 'rec') {
 			launchRec()
-			return
-		}
-		if (choice === 'map') {
-			shell.openExternal(MAP_URL)
 			return
 		}
 		createWindow()
@@ -468,6 +547,7 @@ if ($procs) {
 	ipcMain.on('back-to-launcher', (event) => {
 		cursorHideRequested = false
 		applyCursorHidden(false)
+		globalShortcut.unregisterAll() // atalhos Alt+ só existem com o Cam aberto
 		createLauncher()
 		const sender = BrowserWindow.fromWebContents(event.sender)
 		if (sender && !sender.isDestroyed()) sender.close()
@@ -549,7 +629,9 @@ if ($procs) {
 			} catch {}
 		}
 	}
-	applyBindings({})
+	// Os atalhos Alt+ só são registrados quando a janela do Cam abre (ela
+	// manda 'set-bindings' ao carregar). Antes valiam desde o launcher e
+	// roubavam Alt+Z/X/1/2/3/C/S/R de todos os programas mesmo usando só o Rec.
 	ipcMain.on('set-bindings', (_e, b) => applyBindings(b || {}))
 
 	ipcMain.handle('list-sources', async () => {

@@ -38,15 +38,8 @@
       "to": "assets/wallpapers"
     }
   ],
-  "publish": [
-    {
-      "provider": "github",
-      "owner": "webadderall",
-      "repo": "Recordly",
-      "tagNamePrefix": "v",
-      "publishAutoUpdate": true
-    }
-  ],
+  // o Rec é distribuído dentro do instalador do Takeat Studio
+  "publish": null,
 
   "mac": {
     "hardenedRuntime": true,

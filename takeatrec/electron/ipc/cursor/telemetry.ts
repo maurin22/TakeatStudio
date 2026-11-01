@@ -21,9 +21,43 @@ import {
 	setCursorCaptureInterval,
 	setCursorCapturePauseStartedAtMs,
 	setPendingCursorSamples,
+	windowsCaptureTargetPath,
 } from "../state";
 import type { CursorInteractionType, CursorTelemetryPoint, CursorVisualType } from "../types";
-import { getScreen, getTelemetryPathForVideo } from "../utils";
+import {
+	getCheckpointTelemetryPathForVideo,
+	getScreen,
+	getTelemetryPathForVideo,
+} from "../utils";
+
+// Salvamento contínuo do cursor durante a gravação: se o app travar ou o PC
+// desligar, o vídeo recuperado ainda tem cursor (antes ficava só na memória).
+const CURSOR_CHECKPOINT_INTERVAL_MS = 20_000;
+let lastCursorCheckpointMs = 0;
+let cursorCheckpointInFlight = false;
+
+function checkpointCursorTelemetry() {
+	const targetPath = windowsCaptureTargetPath;
+	if (!targetPath || cursorCheckpointInFlight || activeCursorSamples.length === 0) return;
+	const now = Date.now();
+	if (now - lastCursorCheckpointMs < CURSOR_CHECKPOINT_INTERVAL_MS) return;
+	lastCursorCheckpointMs = now;
+	cursorCheckpointInFlight = true;
+
+	const checkpointPath = getCheckpointTelemetryPathForVideo(targetPath);
+	const tempPath = `${checkpointPath}.tmp`;
+	const body = JSON.stringify({ version: CURSOR_TELEMETRY_VERSION, samples: activeCursorSamples });
+	fs.writeFile(tempPath, body, "utf-8")
+		.then(() => fs.rename(tempPath, checkpointPath))
+		.catch((error) => console.warn("Cursor checkpoint failed:", error))
+		.finally(() => {
+			cursorCheckpointInFlight = false;
+		});
+}
+
+export function resetCursorCheckpoint() {
+	lastCursorCheckpointMs = Date.now();
+}
 
 export function clamp(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
@@ -271,6 +305,8 @@ export async function persistPendingCursorTelemetry(videoPath: string) {
 			),
 			"utf-8",
 		);
+		// o arquivo oficial está salvo: a cópia de segurança não é mais necessária
+		await fs.rm(getCheckpointTelemetryPathForVideo(videoPath), { force: true }).catch(() => undefined);
 	}
 	setPendingCursorSamples([]);
 }
@@ -304,6 +340,7 @@ export function startCursorSampling() {
 	const tick = () => {
 		if (isCursorCaptureActive && !isCursorCapturePaused()) {
 			sampleCursorPoint();
+			checkpointCursorTelemetry();
 		}
 
 		const now = Date.now();

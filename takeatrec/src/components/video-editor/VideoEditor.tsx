@@ -9,6 +9,7 @@ import {
 	DownloadSimple as Download,
 	FolderOpen,
 	Gear,
+	Package,
 	Pause,
 	Camera as PhCameraRegular,
 	Play,
@@ -1342,6 +1343,9 @@ export default function VideoEditor() {
 	const handleShowCursorChange = useCallback((nextShowCursor: boolean) => {
 		setSessionShowCursorOverride(null);
 		setShowCursor(nextShowCursor);
+		// só a escolha explícita vira padrão das próximas gravações; abrir um
+		// projeto antigo com o cursor desligado não pode desligar o de todo mundo
+		saveEditorPreferences({ showCursor: nextShowCursor });
 	}, []);
 
 	const remountPreview = useCallback(() => {
@@ -2641,7 +2645,6 @@ export default function VideoEditor() {
 			zoomInEasing,
 			zoomOutEasing,
 			connectedZoomEasing,
-			showCursor,
 			loopCursor,
 			cursorStyle,
 			cursorSize,
@@ -2697,7 +2700,6 @@ export default function VideoEditor() {
 		zoomInEasing,
 		zoomOutEasing,
 		connectedZoomEasing,
-		showCursor,
 		loopCursor,
 		cursorStyle,
 		cursorSize,
@@ -3066,6 +3068,56 @@ export default function VideoEditor() {
 			setProjectBrowserOpen(false);
 		}
 	}, [saveProject]);
+
+	// "Salvar arquivo": um .takeatpack com projeto + vídeo + cursor + câmera
+	// + áudios, pra continuar editando depois ou abrir em outro computador
+	const [isExportingPack, setIsExportingPack] = useState(false);
+	const handleExportProjectPack = useCallback(async () => {
+		if (isExportingPack) return;
+		if (!currentSourcePath) {
+			toast.error("Nenhum vídeo carregado");
+			return;
+		}
+		setIsExportingPack(true);
+		const loadingToast = toast.loading("Salvando o arquivo do projeto...");
+		try {
+			const projectData =
+				currentProjectSnapshot?.videoPath === currentSourcePath
+					? currentProjectSnapshot
+					: createProjectData(
+							currentSourcePath,
+							currentPersistedEditorState,
+							lastSavedSnapshot?.projectId ?? null,
+						);
+			const fallbackName =
+				currentSourcePath
+					.split(/[\\/]/)
+					.pop()
+					?.replace(/\.[^.]+$/, "") || `projeto-${Date.now()}`;
+			const result = await window.electronAPI.exportProjectPack(
+				projectData,
+				projectDisplayName || fallbackName,
+			);
+			if (result.canceled) return;
+			if (!result.success) {
+				toast.error(result.message || "Não foi possível salvar o arquivo");
+				return;
+			}
+			const sizeMb = ((result.totalBytes ?? 0) / (1024 * 1024)).toFixed(0);
+			toast.success(`Arquivo salvo (${sizeMb} MB). Abra em "Abrir projetos" em qualquer PC.`);
+			if (result.path) void window.electronAPI.revealInFolder?.(result.path);
+		} finally {
+			toast.dismiss(loadingToast);
+			setIsExportingPack(false);
+		}
+	}, [
+		currentPersistedEditorState,
+		currentProjectSnapshot,
+		currentSourcePath,
+		isExportingPack,
+		lastSavedSnapshot?.projectId,
+		projectDisplayName,
+	]);
 
 	useEffect(() => {
 		if (!currentProjectPath || !hasUnsavedChanges) {
@@ -5839,6 +5891,19 @@ export default function VideoEditor() {
 						aria-label={t("editor.project.projects", "Open projects")}
 					>
 						<FolderOpen className="h-4 w-4" />
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={() => void handleExportProjectPack()}
+						disabled={isExportingPack}
+						className="inline-flex h-8 items-center gap-1.5 rounded-[5px] border border-foreground/10 bg-foreground/5 px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-50"
+						title="Salvar um arquivo com tudo (vídeo, cursor, câmera e edição) pra editar depois ou abrir em outro PC"
+						aria-label="Salvar arquivo do projeto"
+					>
+						<Package className="h-4 w-4" />
+						{isExportingPack ? "Salvando..." : "Salvar arquivo"}
 					</Button>
 					<DiscordLinkButton />
 					<FeedbackDialog />

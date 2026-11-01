@@ -228,7 +228,12 @@ export async function finalizeStoredVideo(videoPath: string) {
 		console.warn("[mac-stop] Failed to persist cursor telemetry:", error);
 	}
 	if (isAutoRecordingPath(videoPath)) {
-		await pruneAutoRecordings([videoPath]);
+		// a limpeza de gravações antigas nunca pode derrubar o salvamento da atual
+		try {
+			await pruneAutoRecordings([videoPath]);
+		} catch (error) {
+			console.warn("[prune] Skipped auto-recording cleanup:", error);
+		}
 	}
 
 	if (

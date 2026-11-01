@@ -9,11 +9,16 @@ import {
 } from "../captions/whisper";
 import { LEGACY_PROJECT_FILE_EXTENSIONS, PROJECT_FILE_EXTENSION } from "../constants";
 import { hasProjectFileExtension, loadProjectFromPath } from "../project/manager";
+import { PROJECT_PACK_EXTENSION } from "../project/pack";
 import { setCurrentProjectPath } from "../state";
 import { approveUserPath, getRecordingsDir } from "../utils";
 
 const VIDEO_FILE_EXTENSIONS = ["webm", "mp4", "mov", "avi", "mkv"];
-const PROJECT_FILE_EXTENSIONS = [PROJECT_FILE_EXTENSION, ...LEGACY_PROJECT_FILE_EXTENSIONS];
+const PROJECT_FILE_EXTENSIONS = [
+	PROJECT_FILE_EXTENSION,
+	PROJECT_PACK_EXTENSION,
+	...LEGACY_PROJECT_FILE_EXTENSIONS,
+];
 
 type OpenVideoFilePickerOptions = {
 	includeProjects?: boolean;
@@ -54,7 +59,9 @@ export function registerCaptionHandlers() {
 
 			const selectedPath = result.filePaths[0];
 
-			if (includeProjects && hasProjectFileExtension(selectedPath)) {
+			const isProjectPack =
+				path.extname(selectedPath).toLowerCase() === `.${PROJECT_PACK_EXTENSION}`;
+			if (includeProjects && (hasProjectFileExtension(selectedPath) || isProjectPack)) {
 				const projectResult = await loadProjectFromPath(selectedPath);
 				return projectResult.success
 					? { ...projectResult, kind: "project" }

@@ -25,6 +25,7 @@ import {
 	resetCursorCaptureClock,
 	resumeCursorCapture,
 	sampleCursorPoint,
+	resetCursorCheckpoint,
 	snapshotCursorTelemetryForPersistence,
 	startCursorSampling,
 	stopCursorCapture,
@@ -142,6 +143,7 @@ import {
 	getMacPrivacySettingsUrl,
 	getRecordingsDir,
 	getScreen,
+	getCheckpointTelemetryPathForVideo,
 	getTelemetryPathForVideo,
 	moveFileWithOverwrite,
 	normalizeVideoSourcePath,
@@ -922,6 +924,9 @@ export function registerRecordingHandlers(
 				const diagnosticsSystemAudioPath = windowsSystemAudioPath;
 				const diagnosticsMicAudioPath = windowsMicAudioPath;
 				setWindowsCaptureStopRequested(true);
+				// para de coletar o cursor já no clique de parar: enquanto o vídeo
+				// finaliza (até ~2s) o cursor seguia gravando além do fim do vídeo
+				setIsCursorCaptureActive(false);
 				proc.stdin.write("stop\n");
 				const tempVideoPath = await waitForWindowsCaptureStop(proc);
 				stagedTempVideoPath = tempVideoPath;
@@ -1055,6 +1060,14 @@ export function registerRecordingHandlers(
 								recoveredAfterStopFailure: true,
 							},
 						});
+						// O vídeo recuperado também precisa do cursor: sem isto a
+						// gravação "salva" depois de uma falha abria sem cursor nenhum
+						snapshotCursorTelemetryForPersistence();
+						try {
+							await persistPendingCursorTelemetry(fallbackPath);
+						} catch (telemetryError) {
+							console.warn("Failed to persist cursor telemetry for recovered video:", telemetryError);
+						}
 						return { success: true, path: fallbackPath };
 					} catch {
 						// File is absent or failed validation.
@@ -1822,6 +1835,7 @@ export function registerRecordingHandlers(
 			setPendingCursorSamples([]);
 			setCursorCaptureStartTimeMs(Date.now());
 			resetCursorCaptureClock();
+			resetCursorCheckpoint();
 			setLinuxCursorScreenPoint(null);
 			setLastLeftClick(null);
 			sampleCursorPoint();
@@ -1882,7 +1896,22 @@ export function registerRecordingHandlers(
 		} catch (error) {
 			const nodeError = error as NodeJS.ErrnoException;
 			if (nodeError.code === "ENOENT") {
-				return { success: true, samples: [] };
+				// gravação que não terminou direito (travou, PC desligou): usa a
+				// cópia do cursor salva durante a gravação, se existir
+				try {
+					const checkpoint = await fs.readFile(
+						getCheckpointTelemetryPathForVideo(targetVideoPath),
+						"utf-8",
+					);
+					return {
+						success: true,
+						samples: normalizeCursorTelemetrySamples(
+							parseJsonWithByteOrderMark<unknown>(checkpoint),
+						),
+					};
+				} catch {
+					return { success: true, samples: [] };
+				}
 			}
 			console.error("Failed to load cursor telemetry:", error);
 			return {

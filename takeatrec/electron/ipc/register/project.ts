@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { RECORDINGS_DIR } from "../../appPaths";
 import { buildMediaUrl, getMediaServerBaseUrl } from "../../mediaServer";
 import {
@@ -10,6 +10,7 @@ import {
 	PROJECT_FILE_EXTENSION,
 } from "../constants";
 import { getProjectBackupPath, writeProjectFileAtomically } from "../project/atomicSave";
+import { PROJECT_PACK_EXTENSION, writeProjectPack } from "../project/pack";
 import {
 	getProjectsDir,
   getProjectThumbnailPath,
@@ -463,6 +464,38 @@ export function registerProjectHandlers() {
       }
     })
 
+  // "Salvar arquivo": junta projeto + vídeo + cursor + câmera + áudios num
+  // .takeatpack só, pra editar depois ou abrir em outro computador
+  ipcMain.handle('export-project-pack', async (_, projectData: unknown, suggestedName?: string) => {
+    try {
+      const preparedProject = ensureProjectDataHasProjectId(projectData)
+      const safeName = normalizeProjectSaveName(suggestedName) || `projeto-${Date.now()}`
+      const owner = BrowserWindow.getFocusedWindow()
+      const dialogOptions = {
+        title: 'Salvar arquivo do projeto',
+        defaultPath: path.join(app.getPath('desktop'), `${safeName}.${PROJECT_PACK_EXTENSION}`),
+        filters: [{ name: 'Pacote Takeat Rec', extensions: [PROJECT_PACK_EXTENSION] }],
+        properties: ['createDirectory', 'showOverwriteConfirmation'] as Array<'createDirectory' | 'showOverwriteConfirmation'>,
+      }
+      const result = owner
+        ? await dialog.showSaveDialog(owner, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true, message: 'Salvamento cancelado' }
+      }
+
+      const summary = await writeProjectPack(preparedProject.projectData, safeName, result.filePath)
+      return { success: true, path: result.filePath, ...summary }
+    } catch (error) {
+      console.error('Failed to export project pack:', error)
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Não foi possível salvar o arquivo',
+      }
+    }
+  })
+
   ipcMain.handle('load-project-file', async () => {
     try {
       const projectsDir = await getProjectsDir()
@@ -470,7 +503,8 @@ export function registerProjectHandlers() {
         title: 'Open Takeat Rec Project',
         defaultPath: projectsDir,
         filters: [
-          { name: 'Takeat Rec Project', extensions: [PROJECT_FILE_EXTENSION, ...LEGACY_PROJECT_FILE_EXTENSIONS] },
+          { name: 'Takeat Rec Project', extensions: [PROJECT_FILE_EXTENSION, PROJECT_PACK_EXTENSION, ...LEGACY_PROJECT_FILE_EXTENSIONS] },
+          { name: 'Pacote Takeat Rec (outro PC)', extensions: [PROJECT_PACK_EXTENSION] },
           { name: 'JSON', extensions: ['json'] },
           { name: 'All Files', extensions: ['*'] }
         ],

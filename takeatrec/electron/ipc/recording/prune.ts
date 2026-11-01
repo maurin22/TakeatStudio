@@ -8,6 +8,7 @@ import {
 	PROJECT_FILE_EXTENSION,
 	PROJECTS_DIRECTORY_NAME,
 } from "../constants";
+import { loadRecentProjectPaths } from "../project/manager";
 import { currentVideoPath } from "../state";
 import {
 	getRecordingsDir,
@@ -110,6 +111,34 @@ async function loadSavedProjectMediaPaths() {
 				}
 			}),
 	);
+
+	// Projetos salvos FORA da pasta de projetos (Área de Trabalho, outro HD,
+	// "Salvar como") também precisam proteger seus vídeos: antes a limpeza
+	// automática apagava o vídeo deles e o projeto deixava de abrir.
+	try {
+		for (const projectPath of await loadRecentProjectPaths()) {
+			try {
+				const rawProject = parseJsonWithByteOrderMark<{
+					videoPath?: unknown;
+					editor?: { webcam?: { sourcePath?: unknown } };
+				}>(await fs.readFile(projectPath, "utf-8"));
+				for (const candidatePath of [rawProject.videoPath, rawProject.editor?.webcam?.sourcePath]) {
+					if (typeof candidatePath !== "string" || candidatePath.trim().length === 0) continue;
+					const normalized = normalizePath(normalizeVideoSourcePath(candidatePath) ?? candidatePath);
+					protectedPaths.add(normalized);
+					try {
+						protectedPaths.add(await fs.realpath(normalized));
+					} catch {
+						// mídia ausente: nada a proteger
+					}
+				}
+			} catch {
+				// projeto recente apagado ou ilegível: ignora
+			}
+		}
+	} catch (error) {
+		console.warn("[prune] Could not read recent projects list:", error);
+	}
 
 	return protectedPaths;
 }

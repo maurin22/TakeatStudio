@@ -23,6 +23,8 @@ import {
 	setRecordingsDirLoaded,
 } from "../state";
 import type { ProjectLibraryEntry, RecordingSessionData } from "../types";
+import { writeProjectFileAtomically } from "./atomicSave";
+import { collectProjectMediaPaths, extractProjectPack, PROJECT_PACK_EXTENSION } from "./pack";
 import {
 	getRecordingsDir,
 	normalizePath,
@@ -426,8 +428,89 @@ function isLoadableProjectData(projectData: unknown) {
 	);
 }
 
+async function pathExists(candidate: string) {
+	try {
+		await fs.access(candidate, fsConstants.F_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Projeto copiado de outro computador guarda caminhos absolutos que não
+ * existem aqui (ex.: C:\Users\OutraPessoa\...). Procura cada mídia perdida
+ * pelo nome do arquivo ao lado do projeto e na pasta de gravações; se achar,
+ * reescreve o caminho. Devolve null quando não precisou mexer em nada.
+ */
+async function relinkMissingProjectMedia(project: unknown, projectPath: string) {
+	const searchDirs = [path.dirname(projectPath)];
+	try {
+		searchDirs.push(await getRecordingsDir());
+	} catch {
+		// sem pasta de gravações, procura só ao lado do projeto
+	}
+
+	const replacements = new Map<string, string>();
+	for (const mediaPath of collectProjectMediaPaths(project)) {
+		if (await pathExists(mediaPath)) continue;
+		const fileName = path.basename(mediaPath.replace(/\\/g, "/"));
+		for (const dir of searchDirs) {
+			const candidate = path.join(dir, fileName);
+			if (await pathExists(candidate)) {
+				replacements.set(mediaPath, candidate);
+				break;
+			}
+		}
+	}
+	if (replacements.size === 0) return null;
+
+	const remap = (value: unknown): unknown => {
+		if (typeof value === "string") return replacements.get(value) ?? value;
+		if (Array.isArray(value)) return value.map(remap);
+		if (value && typeof value === "object") {
+			return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, remap(v)]));
+		}
+		return value;
+	};
+	return remap(project);
+}
+
+/**
+ * Abre um pacote .takeatpack: extrai as mídias numa pasta dentro das
+ * gravações, grava o projeto na pasta de projetos e devolve o caminho dele.
+ */
+async function importProjectPack(packPath: string) {
+	const recordingsDir = await getRecordingsDir();
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const packBase = path.basename(packPath, path.extname(packPath)).replace(/[<>:"/\\|?*]+/g, "-");
+	const mediaDir = path.join(recordingsDir, "Importados", `${packBase}-${stamp}`);
+	const { project, projectName } = await extractProjectPack(packPath, mediaDir);
+
+	const projectsDir = await getProjectsDir();
+	const safeName =
+		(projectName || packBase).replace(/[<>:"/\\|?*]+/g, "-").trim() || `projeto-${stamp}`;
+	let projectFile = path.join(projectsDir, `${safeName}.${PROJECT_FILE_EXTENSION}`);
+	for (let n = 2; await pathExists(projectFile); n++) {
+		projectFile = path.join(projectsDir, `${safeName} (${n}).${PROJECT_FILE_EXTENSION}`);
+	}
+	await writeProjectFileAtomically(projectFile, JSON.stringify(project, null, 2));
+	return projectFile;
+}
+
 export async function loadProjectFromPath(projectPath: string) {
-	const normalizedPath = normalizePath(projectPath);
+	let normalizedPath = normalizePath(projectPath);
+	if (path.extname(normalizedPath).toLowerCase() === `.${PROJECT_PACK_EXTENSION}`) {
+		try {
+			normalizedPath = normalizePath(await importProjectPack(normalizedPath));
+		} catch (error) {
+			return {
+				success: false,
+				canceled: false,
+				message: `Não foi possível abrir o pacote: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+	}
 	let project: unknown;
 	try {
 		const content = await fs.readFile(normalizedPath, "utf-8");
@@ -445,6 +528,14 @@ export async function loadProjectFromPath(projectPath: string) {
 			canceled: false,
 			message: "Invalid project file format",
 		};
+	}
+	const relinked = await relinkMissingProjectMedia(project, normalizedPath);
+	if (relinked) {
+		project = relinked;
+		// grava a correção pra não precisar procurar de novo da próxima vez
+		await writeProjectFileAtomically(normalizedPath, JSON.stringify(project, null, 2)).catch(
+			(error) => console.warn("Não consegui salvar os caminhos corrigidos do projeto:", error),
+		);
 	}
 	const mediaSources = await resolveProjectMediaSources(project);
 

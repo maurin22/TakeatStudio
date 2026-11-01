@@ -203,10 +203,12 @@ export function resolveBrowserCaptureCursorPolicy({
 		};
 	}
 
+	// O cursor fica fora do vídeo, então o editor PRECISA desenhar o dele
+	// (a partir do cursor.json); escondendo os dois, a gravação sai sem cursor.
 	return {
 		streamCursor: "never",
 		hideOsCursorBeforeRecording: true,
-		hideEditorOverlayCursorByDefault: true,
+		hideEditorOverlayCursorByDefault: false,
 	};
 }
 
@@ -1154,7 +1156,16 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 						// Perform muxing/renaming if on Windows
 						if (isNativeWindows) {
-							await window.electronAPI.muxNativeWindowsRecording(expectedDurationMs);
+							const muxResult =
+								await window.electronAPI.muxNativeWindowsRecording(expectedDurationMs);
+							// antes a falha ia só pro console e a gravação abria sem
+							// microfone/áudio do sistema sem ninguém saber
+							if (!muxResult?.success) {
+								toast.error(
+									"O vídeo foi salvo, mas o áudio (microfone/sistema) não pôde ser juntado.",
+									{ description: muxResult?.message },
+								);
+							}
 						}
 
 						console.log(

@@ -389,7 +389,24 @@ async function startCapture() {
 	// Reinicia só se a captura realmente morrer (janela fechada, etc.)
 	const [track] = stream.getVideoTracks()
 	track.addEventListener('ended', () => restartCapture())
+	// A captura do Windows às vezes congela sem morrer: a faixa fica "muda"
+	// (para de entregar quadros) e o Meet mostra imagem parada. Muda por mais
+	// de 2,5s, a captura reinicia sozinha.
+	let muteTimer = null
+	track.addEventListener('mute', () => {
+		clearTimeout(muteTimer)
+		muteTimer = setTimeout(() => {
+			if (track.readyState === 'live' && track.muted) restartCapture()
+		}, 2500)
+	})
+	track.addEventListener('unmute', () => clearTimeout(muteTimer))
 }
+
+// Se o <video> pausar por qualquer motivo (troca de fonte, economia de
+// energia do Chromium), volta a tocar na hora: pausado = transmissão parada
+video.addEventListener('pause', () => {
+	if (video.srcObject) video.play().catch(() => {})
+})
 
 let restarting = false
 async function restartCapture() {

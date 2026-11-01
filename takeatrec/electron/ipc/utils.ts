@@ -67,6 +67,11 @@ export function getTelemetryPathForVideo(videoPath: string) {
 	return `${videoPath}.cursor.json`;
 }
 
+/** Cópia do cursor salva durante a gravação (sobrevive a travamento). */
+export function getCheckpointTelemetryPathForVideo(videoPath: string) {
+	return `${videoPath}.cursor.partial.json`;
+}
+
 export function isAutoRecordingPath(filePath: string) {
 	return path.basename(filePath).startsWith(AUTO_RECORDING_PREFIX);
 }

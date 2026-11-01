@@ -371,6 +371,20 @@ export function registerExportHandlers() {
 
 				nativeVideoExportSessions.set(sessionId, session);
 
+				// Editor fechou ou travou no meio da exportação: sem isto o ffmpeg
+				// ficava rodando escondido, esperando quadros que nunca chegam
+				event.sender.once("destroyed", () => {
+					if (!nativeVideoExportSessions.has(sessionId)) return;
+					session.terminating = true;
+					try {
+						ffmpegProcess.kill("SIGKILL");
+					} catch {
+						// já tinha encerrado
+					}
+					nativeVideoExportSessions.delete(sessionId);
+					void removeTemporaryExportFile(outputPath);
+				});
+
 				console.log(
 					`[native-export] Started ${isHardwareAcceleratedVideoEncoder(encoderName) ? "hardware" : "software"} session ${sessionId} with ${encoderName}`,
 				);

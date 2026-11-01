@@ -766,6 +766,17 @@ interface Window {
 			canceled?: boolean;
 			error?: string;
 		}>;
+		exportProjectPack: (
+			projectData: unknown,
+			suggestedName?: string,
+		) => Promise<{
+			success: boolean;
+			path?: string;
+			fileCount?: number;
+			totalBytes?: number;
+			message?: string;
+			canceled?: boolean;
+		}>;
 		loadProjectFile: () => Promise<{
 			success: boolean;
 			path?: string;

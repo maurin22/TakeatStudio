@@ -805,6 +805,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			mode,
 		);
 	},
+	exportProjectPack: (projectData: unknown, suggestedName?: string) => {
+		return ipcRenderer.invoke("export-project-pack", projectData, suggestedName);
+	},
 	loadProjectFile: () => {
 		return ipcRenderer.invoke("load-project-file");
 	},

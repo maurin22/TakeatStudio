@@ -2,6 +2,15 @@ import { useCallback, useState } from "react";
 import type { ProjectLibraryEntry } from "@/components/video-editor/ProjectBrowserDialog";
 import type { DesktopSource } from "../popovers/launchPopoverTypes";
 
+// A tela inicial é uma janela-barra flutuante sem área de avisos: a falha ao
+// abrir aparecia em lugar nenhum. Um alerta nativo garante que a pessoa veja.
+function warnOpenFailed(result: { message?: string; error?: string }) {
+	const detail = result.message || result.error || "Erro desconhecido.";
+	window.alert(`Não foi possível abrir o projeto.
+
+${detail}`);
+}
+
 export function useLaunchWindowActions() {
 	const [selectedSource, setSelectedSource] = useState("Screen");
 	const [hasSelectedSource, setHasSelectedSource] = useState(false);
@@ -21,6 +30,10 @@ export function useLaunchWindowActions() {
 	const openVideoFile = useCallback(async () => {
 		const result = await window.electronAPI.openVideoFilePicker({ includeProjects: true });
 		if (result.canceled) return;
+		if (!result.success) {
+			warnOpenFailed(result);
+			return;
+		}
 		if (result.success && result.kind === "project") {
 			await window.electronAPI.switchToEditor();
 			return;
@@ -43,7 +56,9 @@ export function useLaunchWindowActions() {
 	const openProjectFromLibrary = useCallback(async (projectPath: string) => {
 		try {
 			const result = await window.electronAPI.openProjectFileAtPath(projectPath);
-			if (result.canceled || !result.success) {
+			if (result.canceled) return;
+			if (!result.success) {
+				warnOpenFailed(result);
 				return;
 			}
 			await window.electronAPI.switchToEditor();

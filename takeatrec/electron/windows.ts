@@ -635,6 +635,7 @@ export function createHudOverlayWindow(): BrowserWindow {
 	screen.on("display-metrics-changed", handleDisplayMetricsChanged);
 
 	win.on("closed", () => {
+		clearHudDragState();
 		ipcMain.removeListener("hud-overlay-renderer-ready", handleHudRendererReady);
 		screen.removeListener("display-removed", handleDisplayRemoved);
 		screen.removeListener("display-metrics-changed", handleDisplayMetricsChanged);
@@ -709,7 +710,9 @@ export function forceHudOverlayInteractive(): boolean {
 	}
 
 	hudOverlayIgnoringMouse = false;
-	hudOverlayFallbackExpanded = true;
+	// gravando, o HUD tem o tamanho da barra: expandir viraria um bloco sólido
+	// de 860x540 tampando a tela
+	hudOverlayFallbackExpanded = !hudOverlayRecordingActive;
 	applyHudOverlayBounds();
 
 	hud.setIgnoreMouseEvents(false);
@@ -725,9 +728,18 @@ export function forceHudOverlayInteractive(): boolean {
 	return true;
 }
 
+function clearHudDragState() {
+	hudDragOffset = null;
+	hudDragLastCursor = null;
+	hudDragFixedSize = null;
+}
+
 export function setHudOverlayRecordingActive(recording: boolean): void {
 	hudOverlayRecordingActive = Boolean(recording);
 	hudOverlayFallbackExpanded = false;
+	// arrasto interrompido (gravação parou no meio, HUD recarregou) deixava o
+	// estado de arrasto preso e o HUD travava como bloco fixo no rodapé
+	clearHudDragState();
 	applyHudOverlayBounds();
 	// Com encaminhamento de mouse (Windows 11+/Mac) a janela começa deixando o clique passar,
 	// gravando ou não: o renderer liga o clique quando o mouse está na barra ou na câmera.
