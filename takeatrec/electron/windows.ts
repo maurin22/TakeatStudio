@@ -360,13 +360,13 @@ let hudOverlayOutsideSince: number | null = null;
 let hudOverlayLastPassthroughReassert = 0;
 let hudOverlayMouseWatchdog: NodeJS.Timeout | null = null;
 const HUD_WATCHDOG_INTERVAL_MS = 120;
-const HUD_WATCHDOG_RELEASE_MS = 450;
+const HUD_WATCHDOG_RELEASE_MS = 250;
 // Restaurar/trazer a janela à frente (inclusive por outro programa) faz o
 // Windows apagar o WS_EX_TRANSPARENT sem o Electron saber: o estado guardado
 // diz "clique passando" e a janela está sólida. Por isso, com o cursor fora da
 // barra, o clique-através é reaplicado de tempos em tempos, sem confiar no estado.
 const HUD_WATCHDOG_REASSERT_MS = 700;
-const HUD_WATCHDOG_MARGIN = 10;
+const HUD_WATCHDOG_MARGIN = 4;
 
 ipcMain.on("hud-overlay-interactive-rects", (_event, rects: unknown, hold: unknown) => {
 	hudOverlayInteractionHold = Boolean(hold);

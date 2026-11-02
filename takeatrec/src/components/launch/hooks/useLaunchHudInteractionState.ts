@@ -53,7 +53,7 @@ export function useLaunchHudInteractionState({
 					) {
 						window.electronAPI?.hudOverlaySetIgnoreMouse?.(true);
 					}
-				}, 300);
+				}, 0);
 			}
 		};
 
@@ -138,7 +138,7 @@ export function useLaunchHudInteractionState({
 				) {
 					window.electronAPI?.hudOverlaySetIgnoreMouse?.(true);
 				}
-			}, 300);
+			}, 0);
 		},
 		[openId, isHudDraggingRef, isWebcamPreviewDraggingRef, webcamPreviewDragStartRef],
 	);

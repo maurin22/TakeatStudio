@@ -476,11 +476,11 @@ function LaunchWindowContent() {
 					ref={hudContentRef}
 					className="flex items-center overflow-visible flex-col-reverse pointer-events-none"
 				>
-					<div
-						className="flex flex-col items-center pointer-events-auto p-2"
-						onMouseEnter={handleHudMouseEnter}
-						onMouseLeave={handleHudMouseLeave}
-					>
+					{/* Só a barra visível recebe o mouse. Antes o pointer-events-auto ficava
+					    neste invólucro, que não sai do lugar quando a barra é arrastada (o
+					    arraste só aplica transform no filho): sobrava uma zona invisível no
+					    rodapé segurando cliques, e a barra de verdade parava de responder. */}
+					<div className="flex flex-col items-center pointer-events-none p-2">
 						<div
 							ref={hudBarTransformRef}
 							style={{
@@ -491,7 +491,9 @@ function LaunchWindowContent() {
 								ref={hudBarRef}
 								layout={!showRecordingWebcamPreview && !isHudDragging}
 								transition={hudStateTransition}
-								className={`${styles.bar} launch-theme mb-2`}
+								className={`${styles.bar} launch-theme mb-2 pointer-events-auto`}
+								onMouseEnter={handleHudMouseEnter}
+								onMouseLeave={handleHudMouseLeave}
 							>
 								<div
 									// Linux compositors and non-passthrough Windows fallback windows
