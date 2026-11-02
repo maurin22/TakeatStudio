@@ -426,34 +426,11 @@ app.whenReady().then(() => {
 		p.on('error', () => cb && cb(''))
 	}
 
-	// Encontra uma janela REAL (com MainWindowHandle) do Takeat Rec e a traz
-	// pra frente. "found" = trouxe à frente; "none" = só existem processos
-	// fantasmas sem janela (ou nenhum processo).
-	const REC_FOCUS_CMD = `
-$sig = @"
-using System;
-using System.Runtime.InteropServices;
-public class TakeatRecWin {
-	[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-	[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-}
-"@
-Add-Type -TypeDefinition $sig -ErrorAction SilentlyContinue | Out-Null
-$procs = Get-Process electron, TakeatRec -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*takeatrec*' -and $_.MainWindowHandle -ne 0 }
-if ($procs) {
-	foreach ($p in $procs) {
-		[TakeatRecWin]::ShowWindowAsync($p.MainWindowHandle, 9) | Out-Null
-		[TakeatRecWin]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-	}
-	Write-Output "found"
-} else {
-	Write-Output "none"
-}
-`.trim()
-
-	// Versão leve do teste "o Rec tem janela?" pro polling: sem Add-Type
-	// (que compila C# e pesa na máquina a cada chamada). O comando completo,
-	// que traz a janela à frente, só roda quando ela realmente existe.
+	// "O Rec tem janela?" — "found" = existe uma janela real do Takeat Rec;
+	// "none" = só processos fantasmas sem janela (ou nenhum processo).
+	// Não traz nada à frente: SetForegroundWindow/ShowWindow na barra
+	// transparente do Rec quebrava o clique-através do Windows 11 e a
+	// barra passava a segurar todos os cliques da tela.
 	const REC_CHECK_CMD =
 		`if (Get-Process electron, TakeatRec -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*takeatrec*' -and $_.MainWindowHandle -ne 0 }) { 'found' } else { 'none' }`
 
@@ -490,9 +467,11 @@ if ($procs) {
 		if (recLaunching) return
 		recLaunching = true
 		sendRecState('loading')
-		psRun(REC_FOCUS_CMD, (out) => {
+		psRun(REC_CHECK_CMD, (out) => {
 			if (out === 'found') {
-				// Já estava aberto: só trouxemos a janela real à frente
+				// Já estava aberto: abrir de novo cai na trava de instância única
+				// do Rec, que mostra a própria barra do jeito seguro
+				if (app.isPackaged) startRecProcess()
 				recLaunching = false
 				sendRecState('ready')
 				if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
@@ -516,11 +495,9 @@ if ($procs) {
 					}
 					if (result === 'found') {
 						clearInterval(poll)
-						psRun(REC_FOCUS_CMD, () => {
-							recLaunching = false
-							sendRecState('ready')
-							if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
-						})
+						recLaunching = false
+						sendRecState('ready')
+						if (launcherWin && !launcherWin.isDestroyed()) launcherWin.minimize()
 					} else if (Date.now() - started > 90000) {
 						clearInterval(poll)
 						recLaunching = false

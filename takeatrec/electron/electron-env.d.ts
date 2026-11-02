@@ -206,6 +206,11 @@ interface Window {
 		openTakeatStudio: () => void;
 		backToRecording: () => void;
 		hudOverlaySetIgnoreMouse: (ignore: boolean) => void;
+		/** áreas clicáveis do HUD (coordenadas da janela) + se há arrasto em andamento */
+		hudOverlayReportInteractiveRects: (
+			rects: Array<{ x: number; y: number; width: number; height: number }>,
+			hold: boolean,
+		) => void;
 		hudOverlaySetSourceSelectionActive: (active: boolean) => void;
 		hudOverlayDrag: (phase: "start" | "move" | "end", screenX: number, screenY: number) => void;
 		/** gravando: tamanho que a janela do HUD precisa ter (barra + câmera), em DIP */

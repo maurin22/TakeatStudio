@@ -343,6 +343,119 @@ ipcMain.on("hud-overlay-set-ignore-mouse", (_event, ignore: boolean) => {
 	setHudOverlayMousePassthrough(Boolean(ignore));
 });
 
+// Vigia do clique-através (Windows). O HUD fora da gravação é uma janela
+// transparente do tamanho da tela inteira, e quem decidia se ela deixa o
+// clique passar era só o renderer, pelos eventos de "mouseover". Quando a
+// janela ficava sólida sem o mouse estar na barra (foco forçado de fora,
+// toggle de reparo, renderer sem receber o evento), nada a soltava de novo e
+// o PC inteiro parava de responder ao clique. Agora o processo principal olha
+// a posição real do cursor contra os retângulos clicáveis que o renderer
+// informa: fora deles por um instante, o clique volta a passar; em cima, a
+// barra volta a aceitar o clique mesmo que o encaminhamento do Windows tenha
+// quebrado.
+type HudInteractiveRect = { x: number; y: number; width: number; height: number };
+let hudOverlayInteractiveRects: HudInteractiveRect[] = [];
+let hudOverlayInteractionHold = false;
+let hudOverlayOutsideSince: number | null = null;
+let hudOverlayLastPassthroughReassert = 0;
+let hudOverlayMouseWatchdog: NodeJS.Timeout | null = null;
+const HUD_WATCHDOG_INTERVAL_MS = 120;
+const HUD_WATCHDOG_RELEASE_MS = 450;
+// Restaurar/trazer a janela à frente (inclusive por outro programa) faz o
+// Windows apagar o WS_EX_TRANSPARENT sem o Electron saber: o estado guardado
+// diz "clique passando" e a janela está sólida. Por isso, com o cursor fora da
+// barra, o clique-através é reaplicado de tempos em tempos, sem confiar no estado.
+const HUD_WATCHDOG_REASSERT_MS = 700;
+const HUD_WATCHDOG_MARGIN = 10;
+
+ipcMain.on("hud-overlay-interactive-rects", (_event, rects: unknown, hold: unknown) => {
+	hudOverlayInteractionHold = Boolean(hold);
+	hudOverlayInteractiveRects = Array.isArray(rects)
+		? rects.filter(
+				(rect): rect is HudInteractiveRect =>
+					!!rect &&
+					typeof rect === "object" &&
+					[rect.x, rect.y, rect.width, rect.height].every(
+						(value) => typeof value === "number" && Number.isFinite(value),
+					) &&
+					rect.width > 0 &&
+					rect.height > 0,
+			)
+		: [];
+});
+
+function checkHudOverlayMouseLock() {
+	const hud = hudOverlayWindow;
+	if (
+		!hud ||
+		hud.isDestroyed() ||
+		!hud.isVisible() ||
+		hud.isMinimized() ||
+		hudDragOffset ||
+		hudOverlayInteractionHold ||
+		(hudOverlaySourceSelectionActive && !hudOverlayRecordingActive)
+	) {
+		hudOverlayOutsideSince = null;
+		return;
+	}
+
+	const cursor = getScreen().getCursorScreenPoint();
+	const bounds = hud.getContentBounds();
+	const localX = cursor.x - bounds.x;
+	const localY = cursor.y - bounds.y;
+	const overInteractive = hudOverlayInteractiveRects.some(
+		(rect) =>
+			localX >= rect.x - HUD_WATCHDOG_MARGIN &&
+			localX <= rect.x + rect.width + HUD_WATCHDOG_MARGIN &&
+			localY >= rect.y - HUD_WATCHDOG_MARGIN &&
+			localY <= rect.y + rect.height + HUD_WATCHDOG_MARGIN,
+	);
+
+	if (overInteractive) {
+		hudOverlayOutsideSince = null;
+		if (hudOverlayIgnoringMouse) {
+			setHudOverlayMousePassthrough(false);
+		}
+		return;
+	}
+
+	const now = Date.now();
+	if (hudOverlayIgnoringMouse) {
+		hudOverlayOutsideSince = null;
+		if (now - hudOverlayLastPassthroughReassert >= HUD_WATCHDOG_REASSERT_MS) {
+			hudOverlayLastPassthroughReassert = now;
+			hud.setIgnoreMouseEvents(true, { forward: true });
+		}
+		return;
+	}
+
+	if (hudOverlayOutsideSince === null) {
+		hudOverlayOutsideSince = now;
+		return;
+	}
+	if (now - hudOverlayOutsideSince >= HUD_WATCHDOG_RELEASE_MS) {
+		hudOverlayOutsideSince = null;
+		hudOverlayLastPassthroughReassert = now;
+		setHudOverlayMousePassthrough(true);
+	}
+}
+
+function startHudOverlayMouseWatchdog() {
+	stopHudOverlayMouseWatchdog();
+	if (process.platform !== "win32" || !isHudOverlayMousePassthroughSupported()) {
+		return;
+	}
+	hudOverlayMouseWatchdog = setInterval(checkHudOverlayMouseLock, HUD_WATCHDOG_INTERVAL_MS);
+}
+
+function stopHudOverlayMouseWatchdog() {
+	if (hudOverlayMouseWatchdog) {
+		clearInterval(hudOverlayMouseWatchdog);
+		hudOverlayMouseWatchdog = null;
+	}
+	hudOverlayOutsideSince = null;
+}
+
 ipcMain.on("hud-overlay-set-source-selection-active", (_event, active: boolean) => {
 	hudOverlaySourceSelectionActive = Boolean(active);
 	if (hudOverlaySourceSelectionActive) {
@@ -559,6 +672,14 @@ export function createHudOverlayWindow(): BrowserWindow {
 	// the flag off then back on so the native WS_EX_TRANSPARENT flag is fully reset.
 	// On Windows 10 (build < 22000) passthrough is disabled entirely, so skip this.
 	if (process.platform === "win32" && isHudOverlayMousePassthroughSupported()) {
+		// Voltar de minimizado também apaga o clique-através no Windows.
+		win.on("restore", () => {
+			setTimeout(() => {
+				if (!win.isDestroyed()) {
+					setHudOverlayMousePassthrough(hudOverlayIgnoringMouse);
+				}
+			}, 50);
+		});
 		win.on("focus", () => {
 			if (!win.isDestroyed()) {
 				win.setIgnoreMouseEvents(false);
@@ -598,6 +719,9 @@ export function createHudOverlayWindow(): BrowserWindow {
 	ipcMain.on("hud-overlay-renderer-ready", handleHudRendererReady);
 
 	hudOverlayWindow = win;
+	hudOverlayInteractiveRects = [];
+	hudOverlayInteractionHold = false;
+	startHudOverlayMouseWatchdog();
 
 	// On Linux the HUD is dragged by the OS via -webkit-app-region (Wayland
 	// forbids client-side positioning). Mirror moved bounds into drag state.
@@ -636,6 +760,9 @@ export function createHudOverlayWindow(): BrowserWindow {
 
 	win.on("closed", () => {
 		clearHudDragState();
+		if (hudOverlayWindow === win) {
+			stopHudOverlayMouseWatchdog();
+		}
 		ipcMain.removeListener("hud-overlay-renderer-ready", handleHudRendererReady);
 		screen.removeListener("display-removed", handleDisplayRemoved);
 		screen.removeListener("display-metrics-changed", handleDisplayMetricsChanged);

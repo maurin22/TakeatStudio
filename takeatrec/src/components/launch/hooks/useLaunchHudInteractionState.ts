@@ -61,6 +61,51 @@ export function useLaunchHudInteractionState({
 		return () => window.removeEventListener("mouseover", handleMouseOver);
 	}, [openId, isHudDraggingRef, isWebcamPreviewDraggingRef, webcamPreviewDragStartRef]);
 
+	// Informa ao processo principal onde ficam as partes clicáveis (barra,
+	// popovers, câmera, avisos). Ele usa isso para soltar o clique da tela
+	// quando o cursor está longe da barra, mesmo que este renderer perca o
+	// evento de mouseover — antes disso a janela de tela cheia podia ficar
+	// sólida e travar o PC inteiro.
+	useEffect(() => {
+		let lastPayload = "";
+		const report = () => {
+			const viewportArea = window.innerWidth * window.innerHeight;
+			const rects = Array.from(
+				document.querySelectorAll<HTMLElement>(
+					".pointer-events-auto, [data-hud-interactive], [data-radix-popper-content-wrapper], [data-sonner-toast]",
+				),
+			)
+				.map((element) => element.getBoundingClientRect())
+				// nada que cubra quase a janela toda conta como "barra": isso
+				// recriaria o travamento que a vigia existe para impedir
+				.filter(
+					(rect) =>
+						rect.width > 0 &&
+						rect.height > 0 &&
+						rect.width * rect.height < viewportArea * 0.6,
+				)
+				.map((rect) => ({
+					x: Math.round(rect.left),
+					y: Math.round(rect.top),
+					width: Math.round(rect.width),
+					height: Math.round(rect.height),
+				}));
+			const hold = Boolean(
+				isHudDraggingRef.current ||
+					isWebcamPreviewDraggingRef.current ||
+					webcamPreviewDragStartRef.current,
+			);
+			const payload = JSON.stringify([rects, hold]);
+			if (payload === lastPayload) return;
+			lastPayload = payload;
+			window.electronAPI?.hudOverlayReportInteractiveRects?.(rects, hold);
+		};
+
+		report();
+		const interval = window.setInterval(report, 200);
+		return () => window.clearInterval(interval);
+	}, [isHudDraggingRef, isWebcamPreviewDraggingRef, webcamPreviewDragStartRef]);
+
 	const beginInteractiveHudAction = useCallback(() => {
 		isMouseOverHudRef.current = true;
 		window.electronAPI?.hudOverlaySetIgnoreMouse?.(false);
